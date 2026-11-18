@@ -20,7 +20,12 @@ const ST_C = { '': '#94a3b8', '已配管': '#b45309', '已穿線': '#a16207', '�
 const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a34a' };
 const GEAR = [['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
-const APP_VER = '2026-11-19.4';   // 手機頁的版本（選單上顯示；改了程式就改這裡和 sw.js 的 CACHE）
+const APP_VER = '2026-11-19.5';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
+// 每一版改了什麼（手機頁更新後第一次打開時提示，2026-11-19 使用者要求「版本提示」）
+const CHANGES = {
+  '2026-11-19.5': ['設備、模組也可以新增缺失（設備的面板下方）', '點位依模組分組，每個點位寫出是哪個設備或模組', '更新後會提示這一版改了什麼'],
+  '2026-11-19.4': ['有網路時一律先抓最新版', '選單上顯示版本'],
+};
 const PH_MAX = 1600, PH_TH = 240;   // 照片壓縮：同 2D（長邊 1600 px JPEG 0.82、縮圖 240 px 0.72）
 
 /* ---------- IndexedDB：kv（pack、rec）、ph（照片） ---------- */
@@ -269,6 +274,7 @@ function drawPins() {
   for (const x of issues()) {
     if (x.del || x.floorId !== F) continue;
     let pos = isPlaced(x) ? x : null;
+    if (!pos && (x.devId || x.modId)) { const o = x.devId ? ix.D.get(x.devId) : ix.M.get(x.modId); if (isPlaced(o)) pos = { x: +o.x + 1.2, y: +o.y - 1.2 }; }
     if (!pos && x.panelId) { const p = ix.P.get(x.panelId); if (isPlaced(p)) pos = { x: +p.x + 1.2, y: +p.y - 1.2 }; }
     if (pos) pin('iss' + (x.isNew || rec.iss[x.id] ? ' new' : ''), 'i:' + x.id, pos, '!', `--pc:${ISS_C[x.st] || '#dc2626'}`);
   }
@@ -406,17 +412,16 @@ function itemSheet(kind, id) {
     if (kids.length) {
       h += `<div class="sec">盤內設備與模組（${kids.length}）</div><div class="list">${kids.map((c) => {
         const x = itemOf(c.kind, c.id), g = gearOf(c.kind, c.id), pv = progress(c.kind, c.id);
-        return `<div class="it"><div class="main" data-act="item" data-kind="${c.kind}" data-id="${esc(c.id)}"><b>${esc(c.kind === 'm' ? x.code + ' ' + x.name : x.name || x.code)}</b><small>${KIND[c.kind]}${c.kind === 'd' && x.type ? '・' + esc(x.type) : ''}・${GEAR.map(([f, l]) => (g[f] ? '✓' : '・') + l).join(' ')}・點位 ${ptsOf(c.kind, c.id).length}</small></div><span class="pct">${pv === null ? '' : Math.round(pv * 100) + '%'}</span><span class="go">›</span></div>`;
+        return `<div class="it"><div class="main" data-act="item" data-kind="${c.kind}" data-id="${esc(c.id)}"><b>${esc(c.kind === 'm' ? x.code + ' ' + x.name : x.name || x.code)}</b><small>${KIND[c.kind]}${c.kind === 'd' && x.type ? '・' + esc(x.type) : ''}・點位 ${ptsOf(c.kind, c.id).length}</small><span class="gbs">${GEAR.map(([f, l]) => `<span class="gb${g[f] ? ' on' : ''}">${g[f] ? '✓' : ''}${l}</span>`).join('')}</span></div><span class="pct">${pv === null ? '' : Math.round(pv * 100) + '%'}</span><span class="go">›</span></div>`;
       }).join('')}</div>
       <div class="row-btns"><button class="sb" data-act="gearall" data-f="arr">全部到貨</button><button class="sb" data-act="gearall" data-f="ins">全部安裝</button><button class="sb" data-act="gearall" data-f="pwr">全部送電</button></div>`;
     }
   }
-  h += pointsHtml(ptsOf(kind, id));
-  if (kind === 'p') {
-    const iss = issues().filter((x) => !x.del && x.panelId === id);
-    h += `<div class="sec">缺失（${iss.length}）<span class="grow"></span><button class="sb" data-act="newiss">＋ 新增缺失</button></div>`;
-    if (iss.length) h += `<div class="list">${iss.map(issRow).join('')}</div>`;
-  }
+  h += pointsHtml(ptsOf(kind, id), kind);
+  // 缺失：電盤＝掛在這面盤上的（含盤內設備的），設備、模組＝掛在它上面的（2026-11-19 使用者要求「設備要可以上缺失」）
+  const iss = issuesOf(kind, id);
+  h += `<div class="sec">缺失（${iss.length}）<span class="grow"></span><button class="sb" data-act="newiss">＋ 新增缺失</button></div>`;
+  if (iss.length) h += `<div class="list">${iss.map(issRow).join('')}</div>`;
   h += `<div class="sec">照片（這次新增）${o.nph ? `<span class="muted">電腦上另有照片</span>` : ''}</div>${photosHtml(kind, id)}`;
   return [title, h];
 }
@@ -424,17 +429,36 @@ function gearHtml(kind, id) {
   const g = gearOf(kind, id);
   return `<div class="gear">${GEAR.map(([f, l]) => `<button class="chip${g[f] ? ' on' : ''}" data-act="gear" data-kind="${kind}" data-id="${esc(id)}" data-f="${f}">${g[f] ? '✓ ' : ''}${l}${g[f] ? `<small>${esc(String(g[f]).slice(5))}</small>` : ''}</button>`).join('')}</div>`;
 }
-function pointsHtml(ids) {
+// 點位屬於哪個模組（模組自己的點位：鏡像設備 md_）、哪個設備
+const modOfPt = (t) => t.moduleId || (String(t.deviceId || '').startsWith('md_') ? t.deviceId.slice(3) : '');
+const modName = (mid) => { const m = ix.M.get(mid); return m ? ((m.code || '') + ' ' + (m.name || '')).trim() : ''; };
+const devName = (t) => String(t.deviceId || '').startsWith('md_') ? '模組 ' + modName(t.deviceId.slice(3)) : (ix.D.get(t.deviceId)?.name || ix.D.get(t.deviceId)?.code || '');
+let grpIds = [];   // 這次畫的各組點位（組的勾選用）
+function pointsHtml(ids, kind = 'p') {
   if (!ids.length) return `<div class="sec">點位</div><p class="muted">沒有點位</p>`;
-  const sts = ix.sts, pts = ids.map(ptOf).sort((a, b) => String(a.tag || a.name).localeCompare(String(b.tag || b.name), 'zh-Hant'));
+  const sts = ix.sts, pts = ids.map(ptOf).sort((a, b) => String(a.ch || '').localeCompare(String(b.ch || ''), 'en', { numeric: true }) || String(a.tag || a.name).localeCompare(String(b.tag || b.name), 'zh-Hant'));
   const all = ids.length && ids.every((id) => chk.has(id));
   let h = `<div class="sec"><input type="checkbox" data-act="chkall" ${all ? 'checked' : ''} aria-label="全選" style="width:22px;height:22px">點位（${ids.length}）・已驗收 ${pts.filter((t) => t.st === '已驗收').length}・OK ${pts.filter((t) => t.ioRes === 'OK').length}</div>`;
   const nC = ids.filter((id) => chk.has(id)).length;
   if (nC) h += `<div class="batch"><b>已選 ${nC}</b><select data-act="bst"><option value="">施工狀態…</option>${sts.map((s) => `<option value="${esc(s || '-')}">${esc(s || '未施工')}</option>`).join('')}</select><button class="sb" data-act="bio" data-v="OK">測試 OK</button><button class="sb" data-act="bio" data-v="NG">NG</button><button class="sb" data-act="bclr">取消</button></div>`;
-  h += `<div class="list">${pts.map((t) => {
+  // 分組：模組的面板依設備分，其他依模組分（沒有接模組的另成一組）
+  const byDev = kind === 'm', groups = new Map();
+  for (const t of pts) { const k = byDev ? (t.deviceId || '') : modOfPt(t); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); }
+  const keys = [...groups.keys()].sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || (byDev ? devName({ deviceId: a }) : modName(a)).localeCompare(byDev ? devName({ deviceId: b }) : modName(b), 'zh-Hant', { numeric: true }));
+  grpIds = keys.map((k) => groups.get(k).map((t) => t.id));
+  const row = (t) => {
     const ed = open.has(t.id), mine = !!rec.pts[t.id];
-    return `<div class="it${ed ? ' open' : ''}"><input type="checkbox" data-act="chk" data-id="${esc(t.id)}" ${chk.has(t.id) ? 'checked' : ''}><div class="main" data-act="pt" data-id="${esc(t.id)}"><b>${esc(t.name || '（未命名）')}</b>${mine ? ' <span style="color:#f97316">●</span>' : ''}<small>${esc([t.signal, t.tag].filter(Boolean).join('・'))}</small></div>${t.ioRes ? `<span class="io ${esc(t.ioRes)}">${esc(t.ioRes)}</span>` : ''}<span class="st" style="--sc:${ST_C[t.st || ''] || '#64748b'}">${esc(t.st || '未施工')}</span></div>${ed ? ptEditor(t) : ''}`;
-  }).join('')}</div>`;
+    const who = byDev ? '' : devName(t), ch = t.ch ? '通道 ' + t.ch : '';
+    const sub = (byDev ? [t.signal, ch] : [who, t.signal, ch]).filter(Boolean).join('・');
+    return `<div class="it${ed ? ' open' : ''}"><input type="checkbox" data-act="chk" data-id="${esc(t.id)}" ${chk.has(t.id) ? 'checked' : ''}><div class="main" data-act="pt" data-id="${esc(t.id)}" title="${esc(t.tag || '')}"><b>${esc(t.name || '（未命名）')}</b>${mine ? ' <span style="color:#f97316">●</span>' : ''}<small>${esc(sub)}</small></div>${t.ioRes ? `<span class="io ${esc(t.ioRes)}">${esc(t.ioRes)}</span>` : ''}<span class="st" style="--sc:${ST_C[t.st || ''] || '#64748b'}">${esc(t.st || '未施工')}</span></div>${ed ? ptEditor(t) : ''}`;
+  };
+  keys.forEach((k, gi) => {
+    const L = groups.get(k), on = L.every((t) => chk.has(t.id));
+    const nm = byDev ? (devName({ deviceId: k }) || '（沒有設備）') : k ? modName(k) || '模組' : '沒有接模組';
+    const done = L.filter((t) => t.st === '已驗收').length;
+    if (keys.length > 1 || k) h += `<div class="grp"><input type="checkbox" data-act="chkgrp" data-g="${gi}" ${on ? 'checked' : ''} aria-label="選這一組"><span class="kind">${byDev ? '設備' : k ? '模組' : '—'}</span><b>${esc(nm)}</b><span class="pct">${L.length} 點${done ? '・驗收 ' + done : ''}</span></div>`;
+    h += `<div class="list">${L.map(row).join('')}</div>`;
+  });
   return h;
 }
 function ptEditor(t) {
@@ -449,18 +473,31 @@ function ptEditor(t) {
     <label class="fld"><span>施工備註</span><input data-act="pf" data-f="stNote" data-id="${esc(t.id)}" value="${esc(t.stNote || '')}"></label>
   </div>`;
 }
+// 物件上的缺失（電盤含盤內設備、模組的）
+function issuesOf(kind, id) {
+  return issues().filter((x) => !x.del && (kind === 'p' ? x.panelId === id : kind === 'd' ? x.devId === id : x.modId === id));
+}
+// 對物件新增缺失的欄位（同 2D 的 issAddObj：位置照物件，物件在電盤裡時照電盤）
+function issueFields(kind, id) {
+  const o = itemOf(kind, id); if (!o) return {};
+  const pid = kind === 'p' ? o.id : o.panelId || '', pan = pid ? ix.P.get(pid) : null, pos = isPlaced(o) ? o : isPlaced(pan) ? pan : null;
+  return { floorId: (kind === 'p' ? o.floorId : pan?.floorId || o.floorId) || curFloor, panelId: pid, ...(kind === 'd' ? { devId: id } : kind === 'm' ? { modId: id } : {}),
+    ...(pos ? { x: +Math.min(100, +pos.x + 1.2).toFixed(2), y: +Math.max(0, +pos.y - 1.2).toFixed(2) } : {}) };
+}
+const issObjName = (x) => x.devId ? '設備 ' + (ix.D.get(x.devId)?.name || '') : x.modId ? '模組 ' + modName(x.modId) : '';
 function issRow(x) {
-  return `<div class="it"><div class="main" data-act="iss" data-id="${esc(x.id)}"><b>${esc(x.no)} ${esc(x.title || '（未填標題）')}</b><small>${esc(x.at || '')}${x.isNew ? '・手機新增' : rec.iss[x.id] ? '・手機改過' : ''}</small></div><span class="st" style="--sc:${ISS_C[x.st] || '#64748b'}">${esc(x.st)}</span><span class="go">›</span></div>`;
+  return `<div class="it"><div class="main" data-act="iss" data-id="${esc(x.id)}"><b>${esc(x.no)} ${esc(x.title || '（未填標題）')}</b><small>${esc([x.at, issObjName(x)].filter(Boolean).join('・'))}${x.isNew ? '・手機新增' : rec.iss[x.id] ? '・手機改過' : ''}</small></div><span class="st" style="--sc:${ISS_C[x.st] || '#64748b'}">${esc(x.st)}</span><span class="go">›</span></div>`;
 }
 function issueSheet(id) {
   const x = issues().find((q) => q.id === id);
   if (!x) return ['找不到缺失', ''];
   const pan = x.panelId ? ix.P.get(x.panelId) : null, fl = ix.F.get(x.floorId);
-  const title = `<span class="kind">缺失</span>${esc(x.no)}<small>${esc([fl?.name, pan ? '電盤 ' + (pan.code || pan.name) : '', x.isNew ? '手機新增' : ''].filter(Boolean).join('　'))}</small>`;
+  const title = `<span class="kind">缺失</span>${esc(x.no)}<small>${esc([fl?.name, pan ? '電盤 ' + (pan.code || pan.name) : '', issObjName(x), x.isNew ? '手機新增' : ''].filter(Boolean).join('　'))}</small>`;
+  const objBtn = x.devId && ix.D.has(x.devId) ? ['d', x.devId, '看設備 ' + (ix.D.get(x.devId).name || '')] : x.modId && ix.M.has(x.modId) ? ['m', x.modId, '看模組 ' + modName(x.modId)] : null;
   const h = `<div class="note">狀態</div><div class="seg">${(pack.ists?.length ? pack.ists : Object.keys(ISS_C)).map((s) => `<button data-act="ist" data-v="${esc(s)}" class="${x.st === s ? 'on' : ''}" style="--sc:${ISS_C[s] || '#2563eb'}">${esc(s)}</button>`).join('')}</div>
     <label class="fld"><span>標題</span><input data-act="if" data-f="title" value="${esc(x.title || '')}" placeholder="例如：線槽未固定"></label>
     <label class="fld"><span>說明</span><textarea data-act="if" data-f="note" placeholder="位置、狀況、要怎麼處理">${esc(x.note || '')}</textarea></label>
-    ${pan && !(cur && stack.some((q) => q.type === 'item' && q.id === pan.id)) ? `<div class="row-btns"><button class="sb" data-act="item" data-kind="p" data-id="${esc(pan.id)}">看電盤 ${esc(pan.code || pan.name)}</button></div>` : ''}
+    <div class="row-btns">${pan && !stack.some((q) => q.type === 'item' && q.id === pan.id) ? `<button class="sb" data-act="item" data-kind="p" data-id="${esc(pan.id)}">看電盤 ${esc(pan.code || pan.name)}</button>` : ''}${objBtn && !stack.some((q) => q.type === 'item' && q.id === objBtn[1]) ? `<button class="sb" data-act="item" data-kind="${objBtn[0]}" data-id="${esc(objBtn[1])}">${esc(objBtn[2])}</button>` : ''}</div>
     <div class="sec">照片（這次新增）${x.nph ? '<span class="muted">電腦上另有 ' + x.nph + ' 張</span>' : ''}</div>${photosHtml('i', id)}
     ${x.isNew ? '<div class="row-btns"><button class="sb bad" data-act="deliss">刪除這筆缺失</button></div>' : ''}`;
   return [title, h];
@@ -491,12 +528,13 @@ function onSheetClick(e) {
   }
   else if (a === 'pt') { if (open.has(id)) open.delete(id); else open.add(id); reopen(); }
   else if (a === 'chk') { if (b.checked) chk.add(id); else chk.delete(id); reopen(); }
+  else if (a === 'chkgrp') { const ids = grpIds[+b.dataset.g] || []; if (b.checked) ids.forEach((x) => chk.add(x)); else ids.forEach((x) => chk.delete(x)); reopen(); }
   else if (a === 'chkall') { const ids = ptsOf(cur.kind, cur.id); if (b.checked) ids.forEach((x) => chk.add(x)); else ids.forEach((x) => chk.delete(x)); reopen(); }
   else if (a === 'bio') { const ids = [...chk]; setPts(ids, { ioRes: b.dataset.v }); toast('已把 ' + ids.length + ' 個點位的測試結果設為 ' + b.dataset.v); reopen(); }
   else if (a === 'bclr') { chk.clear(); reopen(); }
   else if (a === 'pst') { setPts([id], { st: b.dataset.v === '-' ? '' : b.dataset.v }); reopen(); }
   else if (a === 'pio') { setPts([id], { ioRes: b.dataset.v === '-' ? '' : b.dataset.v }); reopen(); }
-  else if (a === 'newiss') { const p = itemOf('p', cur.id); const it = newIssue({ floorId: p.floorId, panelId: p.id }); openIssue(it.id, true); }
+  else if (a === 'newiss') { const it = newIssue(issueFields(cur.kind, cur.id)); openIssue(it.id, true); }
   else if (a === 'ist') { setIssue(cur.id, { st: b.dataset.v }); reopen(); }
   else if (a === 'cam' || a === 'pics') pickPhoto({ k: b.dataset.k, tid: b.dataset.tid, after: reopen }, a === 'cam');
   else if (a === 'delph') { if (confirm('刪除這張照片？')) removePhoto(id); }
@@ -574,7 +612,10 @@ async function importPack(file) {
   pack = d; start();
   toast('已匯入現場包：' + (d.name || d.code) + '（' + d.floors.length + ' 層）');
 }
-function recFile() {
+// 這支手機的代號、第幾次輸出（localStorage；清掉也只是編號重來）
+function phoneId() { let r = ''; try { r = localStorage.getItem('pp-field-rid') || ''; if (!r) { r = uid('ph'); localStorage.setItem('pp-field-rid', r); } } catch (_) { r = 'ph-unknown'; } return r; }
+function nextSeq() { try { return (+localStorage.getItem('pp-field-seq') || 0) + 1; } catch (_) { return 1; } }
+function recFile(seq) {
   const pts = Object.entries(rec.pts).map(([id, v]) => ({ id, ...v }));
   const gear = (k) => Object.entries(rec.gear).filter(([key]) => key[0] === k).map(([key, v]) => ({ id: key.slice(2), ...v }));
   const iss = Object.entries(rec.iss).map(([id, v]) => {
@@ -582,7 +623,7 @@ function recFile() {
     return { id, ...(v.st !== undefined ? { st: v.st } : {}), ...(v.title !== undefined ? { title: v.title } : {}), ...(v.note !== undefined ? { note: v.note } : {}), upd: v.upd };
   });
   const sh = Object.values(rec.shots).map((s) => ({ id: s.id, no: s.no, title: s.title, floorId: s.floorId, x: s.x, y: s.y, at: s.at }));
-  return { type: 'pp-field-rec', v: 1, code: pack.code || '', name: pack.name || '', at: new Date().toISOString(), pack: pack.id || '',
+  return { type: 'pp-field-rec', v: 1, code: pack.code || '', name: pack.name || '', at: new Date().toISOString(), pack: pack.id || '', rid: phoneId(), seq: seq ?? nextSeq(), app: APP_VER,
     points: pts, devices: gear('d'), modules: gear('m'), issues: iss, shots: sh, photos: photos.map((x) => ({ k: x.k, id: x.tid, p: x.p })) };
 }
 async function exportRec() {
@@ -591,17 +632,17 @@ async function exportRec() {
   if (!n) { toast('還沒有任何記錄'); return; }
   busy('製作記錄檔…');
   const d = new Date(), stamp = today().replace(/-/g, '') + p2(d.getHours()) + p2(d.getMinutes());
-  const name = (pack.code || pack.name || 'project') + '_現場記錄_' + stamp + '.json';
-  const txt = JSON.stringify(recFile()), file = new File([txt], name, { type: 'application/json' });
+  const seq = nextSeq(), name = (pack.code || pack.name || 'project') + '_現場記錄_第' + seq + '次_' + stamp + '.json';
+  const txt = JSON.stringify(recFile(seq)), file = new File([txt], name, { type: 'application/json' });
   // Android Chrome 的分享只接受圖片、PDF、純文字等，.json 會「Permission denied」：分享時改成 .txt（內容一樣是 JSON，2D 的匯入接受 .txt）
   const sfile = new File([txt], name.replace(/\.json$/, '.txt'), { type: 'text/plain' });
   busy(false);
   showPop(innerWidth / 2, 90, `記錄檔 ${name}（${(file.size / 1048576).toFixed(1)} MB）`, [
-    ...(navigator.canShare?.({ files: [sfile] }) ? [['☁ 分享（選「雲端硬碟」存檔）', async () => { try { await navigator.share({ files: [sfile], title: sfile.name }); marked(); } catch (e) { if (e.name !== 'AbortError') toast('分享失敗：' + e.message, true); } }]] : []),
-    ['⬇ 下載到手機', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); marked(); }],
+    ...(navigator.canShare?.({ files: [sfile] }) ? [['☁ 分享（選「雲端硬碟」存檔）', async () => { try { await navigator.share({ files: [sfile], title: sfile.name }); marked(seq); } catch (e) { if (e.name !== 'AbortError') toast('分享失敗：' + e.message, true); } }]] : []),
+    ['⬇ 下載到手機', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); marked(seq); }],
   ]);
 }
-function marked() { rec.exported = Date.now(); touch(); toast('在電腦的 2D「施工進度」頁按「📱 匯入手機記錄」選這個檔'); }
+function marked(seq) { try { localStorage.setItem('pp-field-seq', String(seq)); } catch (_) { /* 存不了 */ } rec.exported = Date.now(); touch(); toast('存到專案的「施工進度」資料夾，電腦 2D「施工進度」頁按「匯入手機記錄」'); }
 function renderRecBar() {
   const n = pack ? recCount() : 0;
   $('recBar').hidden = !n;
@@ -665,6 +706,18 @@ async function boot() {
     photos = await phAll() || [];
   } catch (e) { toast('讀不到手機上的資料：' + e.message, true); }
   if (pack) start(); else $('empty').hidden = false;
+  showWhatsNew();
+}
+// 手機頁換新版後第一次打開：提示這一版改了什麼（第一次安裝不提示）
+function showWhatsNew() {
+  let last = ''; try { last = localStorage.getItem('pp-field-ver') || ''; localStorage.setItem('pp-field-ver', APP_VER); } catch (_) { return; }
+  if (!last || last === APP_VER) return;
+  const vs = Object.keys(CHANGES).filter((v) => v > last).sort().reverse();
+  const items = vs.flatMap((v) => CHANGES[v]);
+  const el = document.createElement('div'); el.className = 'whatsnew';
+  el.innerHTML = `<div class="wn-box"><b>已更新到版本 ${esc(APP_VER)}</b>${items.length ? `<ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}<button class="sb pri">知道了</button></div>`;
+  el.querySelector('button').onclick = () => el.remove();
+  document.body.appendChild(el);
 }
 window.fieldApp = { get pack() { return pack; }, get rec() { return rec; }, get photos() { return photos; }, recFile, importPack, setFloor, openKey, goTo, setPts, setGear };   // 測試用
 boot();
