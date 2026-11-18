@@ -1,0 +1,12 @@
+{
+  "name": "現場記錄",
+  "short_name": "現場記錄",
+  "description": "電氣設計管理工具的手機現場記錄：施工狀態、測試結果、到貨安裝送電、缺失、照片",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "zh-Hant",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

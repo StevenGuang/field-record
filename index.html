@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0f172a">
+<title>現場記錄</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header id="top">
+  <div class="t-row">
+    <select id="floorSel" aria-label="樓層"></select>
+    <div class="t-name" id="projName">現場記錄</div>
+    <button class="ib" id="btnSearch" aria-label="搜尋" title="搜尋">🔍</button>
+    <button class="ib" id="btnIss" aria-label="缺失清單" title="缺失清單">⚠</button>
+    <button class="ib" id="btnMenu" aria-label="選單" title="選單">☰</button>
+  </div>
+  <div class="t-rec" id="recBar" hidden><span id="recTxt"></span><button class="sb pri" id="btnExport2">輸出記錄</button></div>
+</header>
+
+<main id="map">
+  <div id="layer"><img id="plan" alt=""><div id="pins"></div></div>
+  <div id="empty" class="empty" hidden>
+    <b>還沒有現場包</b>
+    <p>在電腦的 2D 工具「施工進度」頁按「📱 匯出手機現場包」，存到 Google 雲端硬碟，再在這裡選那個檔。</p>
+    <button class="sb pri" data-act="import">匯入現場包</button>
+  </div>
+  <div id="hint" class="hint">點圖釘記錄；長按空白處新增缺失或拍攝點；兩指縮放</div>
+</main>
+
+<section id="sheet" class="sheet" hidden>
+  <div class="sh-grab"></div>
+  <div class="sh-head"><button class="ib" id="shBack" hidden aria-label="上一層">‹</button><div class="sh-title" id="shTitle"></div><button class="ib" id="shClose" aria-label="關閉">✕</button></div>
+  <div class="sh-body" id="shBody"></div>
+</section>
+
+<div id="pop" class="pop" hidden></div>
+<div id="toast" class="toast" hidden></div>
+<div id="busy" class="busy" hidden><div class="spin"></div><div id="busyTxt">處理中…</div></div>
+
+<input type="file" id="filePack" accept=".json,application/json" hidden>
+<input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
+<input type="file" id="filePics" accept="image/*" multiple hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
