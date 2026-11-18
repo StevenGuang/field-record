@@ -591,10 +591,12 @@ async function exportRec() {
   busy('製作記錄檔…');
   const d = new Date(), stamp = today().replace(/-/g, '') + p2(d.getHours()) + p2(d.getMinutes());
   const name = (pack.code || pack.name || 'project') + '_現場記錄_' + stamp + '.json';
-  const file = new File([JSON.stringify(recFile())], name, { type: 'application/json' });
+  const txt = JSON.stringify(recFile()), file = new File([txt], name, { type: 'application/json' });
+  // Android Chrome 的分享只接受圖片、PDF、純文字等，.json 會「Permission denied」：分享時改成 .txt（內容一樣是 JSON，2D 的匯入接受 .txt）
+  const sfile = new File([txt], name.replace(/\.json$/, '.txt'), { type: 'text/plain' });
   busy(false);
   showPop(innerWidth / 2, 90, `記錄檔 ${name}（${(file.size / 1048576).toFixed(1)} MB）`, [
-    ...(navigator.canShare?.({ files: [file] }) ? [['☁ 分享（選「雲端硬碟」存檔）', async () => { try { await navigator.share({ files: [file], title: name }); marked(); } catch (e) { if (e.name !== 'AbortError') toast('分享失敗：' + e.message, true); } }]] : []),
+    ...(navigator.canShare?.({ files: [sfile] }) ? [['☁ 分享（選「雲端硬碟」存檔）', async () => { try { await navigator.share({ files: [sfile], title: sfile.name }); marked(); } catch (e) { if (e.name !== 'AbortError') toast('分享失敗：' + e.message, true); } }]] : []),
     ['⬇ 下載到手機', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); marked(); }],
   ]);
 }
