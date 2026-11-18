@@ -20,6 +20,7 @@ const ST_C = { '': '#94a3b8', '已配管': '#b45309', '已穿線': '#a16207', '�
 const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a34a' };
 const GEAR = [['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
+const APP_VER = '2026-11-19.4';   // 手機頁的版本（選單上顯示；改了程式就改這裡和 sw.js 的 CACHE）
 const PH_MAX = 1600, PH_TH = 240;   // 照片壓縮：同 2D（長邊 1600 px JPEG 0.82、縮圖 240 px 0.72）
 
 /* ---------- IndexedDB：kv（pack、rec）、ph（照片） ---------- */
@@ -607,7 +608,7 @@ function renderRecBar() {
   if (n) $('recTxt').textContent = `手機上有 ${n} 項記錄` + (rec.exported && rec.exported >= rec.changed - 200 ? '（已輸出）' : '（還沒輸出）');
 }
 function openMenu() {
-  showPop(innerWidth - 120, 40, pack ? (pack.name || pack.code) + (pack.at ? '・現場包 ' + pack.at.slice(0, 10) : '') : '', [
+  showPop(innerWidth - 120, 40, (pack ? (pack.name || pack.code) + (pack.at ? '・現場包 ' + pack.at.slice(0, 10) : '') + '・' : '') + '版本 ' + APP_VER, [
     ['📥 匯入現場包', () => $('filePack').click()],
     ['📤 輸出記錄', exportRec],
     '-',
@@ -652,7 +653,12 @@ async function boot() {
   $('filePics').addEventListener('change', onPhotoFiles);
   addEventListener('resize', () => { if (pack && !cur) fitView(); });
   document.addEventListener('pointerdown', (e) => { if (!$('pop').hidden && !e.target.closest('#pop')) hidePop(); }, true);
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => { /* 沒有離線快取也能用 */ });
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    // 換了新版的離線程式（sw.js）時自動重新整理一次，才會用到新版的頁面（第一次安裝不用）
+    const had = !!navigator.serviceWorker.controller; let done = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !done) { done = true; location.reload(); } });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => reg.update()).catch(() => { /* 沒有離線快取也能用 */ });
+  }
   try {
     pack = await kvGet('pack') || null;
     rec = { ...emptyRec(), ...(await kvGet('rec') || {}) };
