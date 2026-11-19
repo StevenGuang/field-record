@@ -22,9 +22,10 @@ const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a3
 let GEAR = [['pur', '請購'], ['rcv', '進料'], ['pick', '領料'], ['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
 let EV = ['rcv', 'arr'];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
-const APP_VER = '2026-11-19.7';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
+const APP_VER = '2026-11-19.8';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
 // 每一版改了什麼（手機頁更新後第一次打開時提示，2026-11-19 使用者要求「版本提示」）
 const CHANGES = {
+  '2026-11-19.8': ['有 Android app 版了：照片可以存到自己指定的資料夾（圖片／現場記錄…），輸出記錄用手機的分享選單'],
   '2026-11-19.7': ['📷 拍照時另存一份原始照片到手機的「Download」資料夾，Google 相簿打開「備份裝置資料夾 → Download」就會自動備份（選單可以關）'],
   '2026-11-19.6': ['設備、模組多了請購、進料、領料三個階段', '進料、到貨旁邊的 📷 可以拍照留證（那個階段還沒記就記今天）'],
   '2026-11-19.5': ['設備、模組也可以新增缺失（設備的面板下方）', '點位依模組分組，每個點位寫出是哪個設備或模組', '更新後會提示這一版改了什麼'],
@@ -186,16 +187,27 @@ function pickPhoto(target, camera) { photoTarget = { ...target, cam: !!camera };
 // 拍照另存到手機（2026-11-19 使用者要求「拍的照片自動存在手機內，用 Google 相簿自動備份」）：
 // 相機直接交給頁面的照片不會進手機相簿，所以拍完把原始檔另外下載一份到「Download」資料夾（Google 相簿可以備份這個資料夾）。
 // 只有「📷 拍照」才存（「從相簿」選的本來就在相簿裡）；選單可以關，記在 localStorage pp-field-savecam（'0'＝關）。
+// Android app 版（2026-11-19 使用者要求「照片自己指定要存哪個資料夾」→ mobile-app/ 用 Capacitor 包這一頁）：
+// 有 window.Capacitor 時改用原生外掛 FieldNative（mobile-app/android/.../FieldNativePlugin.java）：照片存到「圖片／指定資料夾」、
+// 記錄檔用 Android 的分享選單或存到「Download／指定資料夾」；網頁版照舊（下載、navigator.share）。
+const NATIVE = !!window.Capacitor?.isNativePlatform?.();
+const FN = NATIVE ? (window.Capacitor.Plugins?.FieldNative || window.Capacitor.registerPlugin?.('FieldNative') || null) : null;   // 沒有 @capacitor/core 時，原生橋接放在 Capacitor.Plugins
+const photoFolder = () => { try { return localStorage.getItem('pp-field-folder') || '現場記錄'; } catch (_) { return '現場記錄'; } };
+const b64Of = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
 const saveCamOn = () => { try { return localStorage.getItem('pp-field-savecam') !== '0'; } catch (_) { return true; } };
 function photoLabel(T) {
   const o = T.k === 's' ? shots().find((x) => x.id === T.tid) : T.k === 'i' ? issues().find((x) => x.id === T.tid) : itemOf(T.k, T.tid);
   const nm = !o ? '' : T.k === 'p' ? (o.code || o.name) : T.k === 'm' ? o.code + ' ' + o.name : T.k === 'i' ? o.no : T.k === 's' ? (o.title || o.no) : (o.name || o.code);
   return [pack?.code || pack?.name, nm, T.ev ? GEAR.find((g) => g[0] === T.ev)?.[1] : ''].filter(Boolean).join('_');
 }
-function saveToPhone(file, T) {
+async function saveToPhone(file, T) {
   const d = new Date(), stamp = today().replace(/-/g, '') + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
   const ext = (/\.([a-z0-9]+)$/i.exec(file.name || '') || [])[1] || 'jpg';
   const name = (photoLabel(T) + '_' + stamp).replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 120) + '.' + ext;
+  if (FN) {   // app：存到「圖片／指定資料夾」
+    try { await FN.savePhoto({ data: await b64Of(file), name, mime: file.type || 'image/jpeg', folder: photoFolder() }); return true; }
+    catch (e) { toast('照片存不進手機相簿：' + (e?.message || e), true); return false; }
+  }
   try { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 8000); return true; }
   catch (_) { return false; }
 }
@@ -663,12 +675,23 @@ async function exportRec() {
   // Android Chrome 的分享只接受圖片、PDF、純文字等，.json 會「Permission denied」：分享時改成 .txt（內容一樣是 JSON，2D 的匯入接受 .txt）
   const sfile = new File([txt], name.replace(/\.json$/, '.txt'), { type: 'text/plain' });
   busy(false);
+  if (FN) {
+    const nat = async (how) => { busy(how === 'share' ? '準備分享…' : '存到手機…'); try { const data = await b64Of(file);
+        if (how === 'share') await FN.share({ data, name, mime: 'application/json', title: name });
+        else { const r = await FN.saveDownload({ data, name, mime: 'application/json', folder: photoFolder() }); toast('已存到手機：' + r.path); }
+        marked(seq, how !== 'share'); } catch (e) { toast((how === 'share' ? '分享失敗：' : '存不進手機：') + (e?.message || e), true); } finally { busy(false); } };
+    showPop(innerWidth / 2, 90, `記錄檔 ${name}（${(file.size / 1048576).toFixed(1)} MB）`, [
+      ['☁ 分享（選「雲端硬碟」存檔）', () => nat('share')],
+      ['⬇ 存到手機（Download／' + photoFolder() + '）', () => nat('save')],
+    ]);
+    return;
+  }
   showPop(innerWidth / 2, 90, `記錄檔 ${name}（${(file.size / 1048576).toFixed(1)} MB）`, [
     ...(navigator.canShare?.({ files: [sfile] }) ? [['☁ 分享（選「雲端硬碟」存檔）', async () => { try { await navigator.share({ files: [sfile], title: sfile.name }); marked(seq); } catch (e) { if (e.name !== 'AbortError') toast('分享失敗：' + e.message, true); } }]] : []),
     ['⬇ 下載到手機', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); marked(seq); }],
   ]);
 }
-function marked(seq) { try { localStorage.setItem('pp-field-seq', String(seq)); } catch (_) { /* 存不了 */ } rec.exported = Date.now(); touch(); toast('存到專案的「施工進度」資料夾，電腦 2D「施工進度」頁按「匯入手機記錄」'); }
+function marked(seq, quiet) { try { localStorage.setItem('pp-field-seq', String(seq)); } catch (_) { /* 存不了 */ } rec.exported = Date.now(); touch(); if (!quiet) toast('存到專案的「施工進度」資料夾，電腦 2D「施工進度」頁按「匯入手機記錄」'); }
 function renderRecBar() {
   const n = pack ? recCount() : 0;
   $('recBar').hidden = !n;
@@ -679,9 +702,13 @@ function openMenu() {
     ['📥 匯入現場包', () => $('filePack').click()],
     ['📤 輸出記錄', exportRec],
     '-',
-    [saveCamOn() ? '📥 拍照另存到手機：開（點一下關）' : '📥 拍照另存到手機：關（點一下開）', () => { const on = !saveCamOn(); try { localStorage.setItem('pp-field-savecam', on ? '1' : '0'); } catch (_) { /* 存不了 */ } toast(on ? '拍照後會另存一份到手機的 Download 資料夾（Google 相簿可以備份這個資料夾）' : '拍照後不另存到手機'); }],
+    [saveCamOn() ? '📥 拍照另存到手機：開（點一下關）' : '📥 拍照另存到手機：關（點一下開）', () => { const on = !saveCamOn(); try { localStorage.setItem('pp-field-savecam', on ? '1' : '0'); } catch (_) { /* 存不了 */ } toast(on ? (FN ? '拍照後會另存一份到「圖片／' + photoFolder() + '」' : '拍照後會另存一份到手機的 Download 資料夾（Google 相簿可以備份這個資料夾）') : '拍照後不另存到手機'); }],
+    ...(FN ? [['📁 照片資料夾：圖片／' + photoFolder(), () => {
+      const v = prompt('照片存到「圖片／」底下的哪個資料夾？\n可以用「/」分層，例如：現場記錄/' + (pack?.code || pack?.name || '專案名稱') + '\n（Google 相簿 → 備份 → 備份裝置資料夾，打開這個資料夾就會自動備份）', photoFolder());
+      if (v === null) return; const t = v.replace(/[\\:*?"<>|]+/g, '_').replace(/^\/+|\/+$/g, '').trim() || '現場記錄';
+      try { localStorage.setItem('pp-field-folder', t); } catch (_) { /* 存不了 */ } toast('照片會存到「圖片／' + t + '」'); }]] : []),
     ['🗑 清除手機上的記錄', async () => { const n = recCount(); if (!n) { toast('沒有記錄'); return; } if (!confirm(`清除手機上的 ${n} 項記錄（含照片）？\n還沒在電腦匯入的會不見。`)) return; rec = emptyRec(); photos = []; await phClear(); await kvPut('rec', rec); renderRecBar(); drawPins(); reopen(); toast('已清除'); }],
-    ['❔ 說明', () => alert('現場記錄\n\n1. 電腦 2D「施工進度」頁按「📱 匯出手機現場包」，存到 Google 雲端硬碟。\n2. 這裡「匯入現場包」選那個檔（之後沒網路也能用）。\n3. 點底圖上的電盤、設備記錄施工狀態、測試結果、到貨／安裝／送電，拍照。\n   長按空白處新增缺失或拍攝點；點位可以勾選後一起改。\n4. 「輸出記錄」→ 分享到雲端硬碟。\n5. 電腦 2D「施工進度」頁按「📱 匯入手機記錄」。\n\n記錄存在這支手機的瀏覽器裡；清除瀏覽器資料會不見，記得輸出。')],
+    ['❔ 說明', () => alert('現場記錄\n\n1. 電腦 2D「施工進度」頁按「📱 匯出手機現場包」，存到 Google 雲端硬碟。\n2. 這裡「匯入現場包」選那個檔（之後沒網路也能用）。\n3. 點底圖上的電盤、設備記錄施工狀態、測試結果、到貨／安裝／送電，拍照。\n   長按空白處新增缺失或拍攝點；點位可以勾選後一起改。\n4. 「輸出記錄」→ 分享到雲端硬碟。\n5. 電腦 2D「施工進度」頁按「📱 匯入手機記錄」。\n\n' + (NATIVE ? '記錄存在這個 app 裡；解除安裝或清除 app 資料會不見，記得輸出。' : '記錄存在這支手機的瀏覽器裡；清除瀏覽器資料會不見，記得輸出。'))],
   ]);
 }
 
@@ -721,7 +748,7 @@ async function boot() {
   $('filePics').addEventListener('change', onPhotoFiles);
   addEventListener('resize', () => { if (pack && !cur) fitView(); });
   document.addEventListener('pointerdown', (e) => { if (!$('pop').hidden && !e.target.closest('#pop')) hidePop(); }, true);
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  if ('serviceWorker' in navigator && location.protocol !== 'file:' && !NATIVE) {   // app 裡頁面檔案本來就在手機上，不用離線快取
     // 換了新版的離線程式（sw.js）時自動重新整理一次，才會用到新版的頁面（第一次安裝不用）
     const had = !!navigator.serviceWorker.controller; let done = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !done) { done = true; location.reload(); } });
