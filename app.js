@@ -2,7 +2,7 @@
  * 手機現場記錄（2026-11-19 使用者要求；需求 docs/mobile-field-spec.md）
  * ---------------------------------------------------------------------
  * 電腦 2D「📱 匯出手機現場包」（type:'pp-field-pack'）→ 這裡匯入（存在手機的 IndexedDB，離線可用）
- * → 在底圖上點電盤、設備、模組記錄：點位施工狀態、測試結果、到貨／安裝／送電、缺失、照片
+ * → 在底圖上點電盤、設備記錄：點位施工狀態、測試結果、到貨／安裝／送電、缺失、照片
  * → 「輸出記錄」（type:'pp-field-rec'）→ 電腦 2D「📱 匯入手機記錄」依時間合併。
  * 記錄只存「改了什麼」（rec），顯示時疊在現場包上；欄位格式和 2D 相同（stTs／ioTs／pgTs、issues.upd）。
  * 不記錄人（使用者決定）：stBy、ioBy 留空。
@@ -22,9 +22,10 @@ const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a3
 let GEAR = [['pur', '請購'], ['rcv', '進料'], ['pick', '領料'], ['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
 let EV = ['rcv', 'arr'];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
-const APP_VER = '2026-11-19.9';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
+const APP_VER = '2026-11-19.10';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
 // 每一版改了什麼（手機頁更新後第一次打開時提示，2026-11-19 使用者要求「版本提示」）
 const CHANGES = {
+  '2026-11-19.10': ['設備、模組合併成「設備」：原本的模組也叫設備（有通道的設備），點位依「上層設備」分組'],
   '2026-11-19.9': ['app 版：照片資料夾改成用選的（選單「📁 照片資料夾」打開系統的選擇資料夾畫面）'],
   '2026-11-19.8': ['有 Android app 版了：照片可以存到自己指定的資料夾（圖片／現場記錄…），輸出記錄用手機的分享選單'],
   '2026-11-19.7': ['📷 拍照時另存一份原始照片到手機的「Download」資料夾，Google 相簿打開「備份裝置資料夾 → Download」就會自動備份（選單可以關）'],
@@ -443,22 +444,22 @@ function openKey(key) {
 function openItem(kind, id, push = false) { chk.clear(); open.clear(); openSheet({ type: 'item', kind, id }, push); }
 function openIssue(id, push = false) { openSheet({ type: 'iss', id }, push); }
 function openShot(id, push = false) { openSheet({ type: 'shot', id }, push); }
-const KIND = { p: '電盤', d: '設備', m: '模組' };
+const KIND = { p: '電盤', d: '設備', m: '設備' };   // m＝有通道的設備（2D 內部的模組；2026-11-19 設備、模組合併）
 function itemSheet(kind, id) {
   const o = itemOf(kind, id);
   if (!o) return ['找不到', '<p class="muted">這個物件不在現場包裡。</p>'];
   const v = progress(kind, id), name = kind === 'p' ? (o.code || '') + ' ' + (o.name || '') : kind === 'm' ? o.code + ' ' + o.name : o.name || o.code;
   const pan = o.panelId ? ix.P.get(o.panelId) : null;
-  const sub = [kind === 'd' ? o.type : '', pan && kind !== 'p' ? '電盤 ' + (pan.code || pan.name) : '', v === null ? '' : '完成度 ' + Math.round(v * 100) + '%'].filter(Boolean).join('　');
+  const sub = [kind === 'd' || kind === 'm' ? o.type : '', pan && kind !== 'p' ? '電盤 ' + (pan.code || pan.name) : '', v === null ? '' : '完成度 ' + Math.round(v * 100) + '%'].filter(Boolean).join('　');
   const title = `<span class="kind">${KIND[kind]}</span>${esc(name)}<small>${esc(sub)}</small>`;
   let h = '';
   if (kind !== 'p') h += `<div class="sec">到貨／安裝／送電</div>${gearHtml(kind, id)}`;
   if (kind === 'p') {
     const kids = ix.inPanel.get(id) || [];
     if (kids.length) {
-      h += `<div class="sec">盤內設備與模組（${kids.length}）</div><div class="list">${kids.map((c) => {
+      h += `<div class="sec">盤內設備（${kids.length}）</div><div class="list">${kids.map((c) => {
         const x = itemOf(c.kind, c.id), g = gearOf(c.kind, c.id), pv = progress(c.kind, c.id);
-        return `<div class="it"><div class="main" data-act="item" data-kind="${c.kind}" data-id="${esc(c.id)}"><b>${esc(c.kind === 'm' ? x.code + ' ' + x.name : x.name || x.code)}</b><small>${KIND[c.kind]}${c.kind === 'd' && x.type ? '・' + esc(x.type) : ''}・點位 ${ptsOf(c.kind, c.id).length}</small><span class="gbs">${GEAR.map(([f, l]) => `<span class="gb${g[f] ? ' on' : ''}">${g[f] ? '✓' : ''}${l}</span>`).join('')}</span></div><span class="pct">${pv === null ? '' : Math.round(pv * 100) + '%'}</span><span class="go">›</span></div>`;
+        return `<div class="it"><div class="main" data-act="item" data-kind="${c.kind}" data-id="${esc(c.id)}"><b>${esc(c.kind === 'm' ? x.code + ' ' + x.name : x.name || x.code)}</b><small>${KIND[c.kind]}${x.type ? '・' + esc(x.type) : ''}・點位 ${ptsOf(c.kind, c.id).length}</small><span class="gbs">${GEAR.map(([f, l]) => `<span class="gb${g[f] ? ' on' : ''}">${g[f] ? '✓' : ''}${l}</span>`).join('')}</span></div><span class="pct">${pv === null ? '' : Math.round(pv * 100) + '%'}</span><span class="go">›</span></div>`;
       }).join('')}</div>
       <div class="sec">盤內全部記錄</div><div class="row-btns gearall">${GEAR.map(([f, l]) => `<button class="sb" data-act="gearall" data-f="${f}">${l}</button>`).join('')}</div>`;
     }
@@ -479,7 +480,7 @@ function gearHtml(kind, id) {
 // 點位屬於哪個模組（模組自己的點位：鏡像設備 md_）、哪個設備
 const modOfPt = (t) => t.moduleId || (String(t.deviceId || '').startsWith('md_') ? t.deviceId.slice(3) : '');
 const modName = (mid) => { const m = ix.M.get(mid); return m ? ((m.code || '') + ' ' + (m.name || '')).trim() : ''; };
-const devName = (t) => String(t.deviceId || '').startsWith('md_') ? '模組 ' + modName(t.deviceId.slice(3)) : (ix.D.get(t.deviceId)?.name || ix.D.get(t.deviceId)?.code || '');
+const devName = (t) => String(t.deviceId || '').startsWith('md_') ? modName(t.deviceId.slice(3)) : (ix.D.get(t.deviceId)?.name || ix.D.get(t.deviceId)?.code || '');
 let grpIds = [];   // 這次畫的各組點位（組的勾選用）
 function pointsHtml(ids, kind = 'p') {
   if (!ids.length) return `<div class="sec">點位</div><p class="muted">沒有點位</p>`;
@@ -501,9 +502,9 @@ function pointsHtml(ids, kind = 'p') {
   };
   keys.forEach((k, gi) => {
     const L = groups.get(k), on = L.every((t) => chk.has(t.id));
-    const nm = byDev ? (devName({ deviceId: k }) || '（沒有設備）') : k ? modName(k) || '模組' : '沒有接模組';
+    const nm = byDev ? (devName({ deviceId: k }) || '（沒有設備）') : k ? modName(k) || '設備' : '沒有上層設備';
     const done = L.filter((t) => t.st === '已驗收').length;
-    if (keys.length > 1 || k) h += `<div class="grp"><input type="checkbox" data-act="chkgrp" data-g="${gi}" ${on ? 'checked' : ''} aria-label="選這一組"><span class="kind">${byDev ? '設備' : k ? '模組' : '—'}</span><b>${esc(nm)}</b><span class="pct">${L.length} 點${done ? '・驗收 ' + done : ''}</span></div>`;
+    if (keys.length > 1 || k) h += `<div class="grp"><input type="checkbox" data-act="chkgrp" data-g="${gi}" ${on ? 'checked' : ''} aria-label="選這一組"><span class="kind">${byDev ? '設備' : k ? '上層' : '—'}</span><b>${esc(nm)}</b><span class="pct">${L.length} 點${done ? '・驗收 ' + done : ''}</span></div>`;
     h += `<div class="list">${L.map(row).join('')}</div>`;
   });
   return h;
@@ -531,7 +532,7 @@ function issueFields(kind, id) {
   return { floorId: (kind === 'p' ? o.floorId : pan?.floorId || o.floorId) || curFloor, panelId: pid, ...(kind === 'd' ? { devId: id } : kind === 'm' ? { modId: id } : {}),
     ...(pos ? { x: +Math.min(100, +pos.x + 1.2).toFixed(2), y: +Math.max(0, +pos.y - 1.2).toFixed(2) } : {}) };
 }
-const issObjName = (x) => x.devId ? '設備 ' + (ix.D.get(x.devId)?.name || '') : x.modId ? '模組 ' + modName(x.modId) : '';
+const issObjName = (x) => x.devId ? '設備 ' + (ix.D.get(x.devId)?.name || '') : x.modId ? '設備 ' + modName(x.modId) : '';
 function issRow(x) {
   return `<div class="it"><div class="main" data-act="iss" data-id="${esc(x.id)}"><b>${esc(x.no)} ${esc(x.title || '（未填標題）')}</b><small>${esc([x.at, issObjName(x)].filter(Boolean).join('・'))}${x.isNew ? '・手機新增' : rec.iss[x.id] ? '・手機改過' : ''}</small></div><span class="st" style="--sc:${ISS_C[x.st] || '#64748b'}">${esc(x.st)}</span><span class="go">›</span></div>`;
 }
@@ -540,7 +541,7 @@ function issueSheet(id) {
   if (!x) return ['找不到缺失', ''];
   const pan = x.panelId ? ix.P.get(x.panelId) : null, fl = ix.F.get(x.floorId);
   const title = `<span class="kind">缺失</span>${esc(x.no)}<small>${esc([fl?.name, pan ? '電盤 ' + (pan.code || pan.name) : '', issObjName(x), x.isNew ? '手機新增' : ''].filter(Boolean).join('　'))}</small>`;
-  const objBtn = x.devId && ix.D.has(x.devId) ? ['d', x.devId, '看設備 ' + (ix.D.get(x.devId).name || '')] : x.modId && ix.M.has(x.modId) ? ['m', x.modId, '看模組 ' + modName(x.modId)] : null;
+  const objBtn = x.devId && ix.D.has(x.devId) ? ['d', x.devId, '看設備 ' + (ix.D.get(x.devId).name || '')] : x.modId && ix.M.has(x.modId) ? ['m', x.modId, '看設備 ' + modName(x.modId)] : null;
   const h = `<div class="note">狀態</div><div class="seg">${(pack.ists?.length ? pack.ists : Object.keys(ISS_C)).map((s) => `<button data-act="ist" data-v="${esc(s)}" class="${x.st === s ? 'on' : ''}" style="--sc:${ISS_C[s] || '#2563eb'}">${esc(s)}</button>`).join('')}</div>
     <label class="fld"><span>標題</span><input data-act="if" data-f="title" value="${esc(x.title || '')}" placeholder="例如：線槽未固定"></label>
     <label class="fld"><span>說明</span><textarea data-act="if" data-f="note" placeholder="位置、狀況、要怎麼處理">${esc(x.note || '')}</textarea></label>
@@ -618,7 +619,7 @@ function openSearch() {
       const fl = (id) => ix.F.get(id)?.name || '';
       for (const p of pack.panels) if (`${p.code} ${p.name}`.toLowerCase().includes(q)) hit.push(['p', p.id, `${p.code} ${p.name}`, '電盤・' + fl(p.floorId)]);
       for (const d of pack.devices) if (`${d.code} ${d.name} ${d.type}`.toLowerCase().includes(q)) hit.push(['d', d.id, d.name || d.code, '設備・' + fl(d.floorId) + (d.panelId ? '・' + (ix.P.get(d.panelId)?.code || '') : '')]);
-      for (const m of pack.modules) if (`${m.code} ${m.name}`.toLowerCase().includes(q)) hit.push(['m', m.id, `${m.code} ${m.name}`, '模組・' + fl(m.floorId)]);
+      for (const m of pack.modules) if (`${m.code} ${m.name}`.toLowerCase().includes(q)) hit.push(['m', m.id, `${m.code} ${m.name}`, '設備・' + fl(m.floorId)]);
       for (const x of issues()) if (!x.del && `${x.no} ${x.title}`.toLowerCase().includes(q)) hit.push(['i', x.id, `${x.no} ${x.title}`, '缺失・' + fl(x.floorId)]);
     }
     return ['搜尋', `<input class="search" id="searchIn" type="search" placeholder="盤號、設備名稱、編號、缺失" value="${esc(searchQ)}" autocomplete="off">
