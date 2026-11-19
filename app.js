@@ -22,9 +22,10 @@ const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a3
 let GEAR = [['pur', '請購'], ['rcv', '進料'], ['pick', '領料'], ['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
 let EV = ['rcv', 'arr'];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
-const APP_VER = '2026-11-19.8';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
+const APP_VER = '2026-11-19.9';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
 // 每一版改了什麼（手機頁更新後第一次打開時提示，2026-11-19 使用者要求「版本提示」）
 const CHANGES = {
+  '2026-11-19.9': ['app 版：照片資料夾改成用選的（選單「📁 照片資料夾」打開系統的選擇資料夾畫面）'],
   '2026-11-19.8': ['有 Android app 版了：照片可以存到自己指定的資料夾（圖片／現場記錄…），輸出記錄用手機的分享選單'],
   '2026-11-19.7': ['📷 拍照時另存一份原始照片到手機的「Download」資料夾，Google 相簿打開「備份裝置資料夾 → Download」就會自動備份（選單可以關）'],
   '2026-11-19.6': ['設備、模組多了請購、進料、領料三個階段', '進料、到貨旁邊的 📷 可以拍照留證（那個階段還沒記就記今天）'],
@@ -192,6 +193,10 @@ function pickPhoto(target, camera) { photoTarget = { ...target, cam: !!camera };
 // 記錄檔用 Android 的分享選單或存到「Download／指定資料夾」；網頁版照舊（下載、navigator.share）。
 const NATIVE = !!window.Capacitor?.isNativePlatform?.();
 const FN = NATIVE ? (window.Capacitor.Plugins?.FieldNative || window.Capacitor.registerPlugin?.('FieldNative') || null) : null;   // 沒有 @capacitor/core 時，原生橋接放在 Capacitor.Plugins
+// 使用者選的照片資料夾（FN.pickFolder 回傳的 { uri（SAF tree）, name（顯示用，例如 Pictures/現場記錄）}），localStorage pp-field-pickdir
+const pickedFolder = () => { try { const v = JSON.parse(localStorage.getItem('pp-field-pickdir') || 'null'); return v && v.uri ? v : null; } catch (_) { return null; } };
+const setPickedFolder = (v) => { try { if (v) localStorage.setItem('pp-field-pickdir', JSON.stringify(v)); else localStorage.removeItem('pp-field-pickdir'); } catch (_) { /* 存不了 */ } };
+const photoFolderLabel = () => { const p = pickedFolder(); return p ? p.name : '圖片／' + photoFolder(); };
 const photoFolder = () => { try { return localStorage.getItem('pp-field-folder') || '現場記錄'; } catch (_) { return '現場記錄'; } };
 const b64Of = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
 const saveCamOn = () => { try { return localStorage.getItem('pp-field-savecam') !== '0'; } catch (_) { return true; } };
@@ -204,8 +209,13 @@ async function saveToPhone(file, T) {
   const d = new Date(), stamp = today().replace(/-/g, '') + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
   const ext = (/\.([a-z0-9]+)$/i.exec(file.name || '') || [])[1] || 'jpg';
   const name = (photoLabel(T) + '_' + stamp).replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 120) + '.' + ext;
-  if (FN) {   // app：存到「圖片／指定資料夾」
-    try { await FN.savePhoto({ data: await b64Of(file), name, mime: file.type || 'image/jpeg', folder: photoFolder() }); return true; }
+  if (FN) {   // app：存到使用者選的資料夾（系統的選擇資料夾畫面），沒選過＝「圖片／現場記錄」
+    const data = await b64Of(file), pf = pickedFolder();
+    if (pf) {
+      try { await FN.savePhoto({ data, name, mime: file.type || 'image/jpeg', treeUri: pf.uri, folderName: pf.name }); return true; }
+      catch (e) { setPickedFolder(null); toast('選的資料夾「' + pf.name + '」存不進去（可能被刪除或沒有權限），這張改存到「圖片／' + photoFolder() + '」；請在選單重新選資料夾', true); }
+    }
+    try { await FN.savePhoto({ data, name, mime: file.type || 'image/jpeg', folder: photoFolder() }); return true; }
     catch (e) { toast('照片存不進手機相簿：' + (e?.message || e), true); return false; }
   }
   try { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 8000); return true; }
@@ -702,11 +712,12 @@ function openMenu() {
     ['📥 匯入現場包', () => $('filePack').click()],
     ['📤 輸出記錄', exportRec],
     '-',
-    [saveCamOn() ? '📥 拍照另存到手機：開（點一下關）' : '📥 拍照另存到手機：關（點一下開）', () => { const on = !saveCamOn(); try { localStorage.setItem('pp-field-savecam', on ? '1' : '0'); } catch (_) { /* 存不了 */ } toast(on ? (FN ? '拍照後會另存一份到「圖片／' + photoFolder() + '」' : '拍照後會另存一份到手機的 Download 資料夾（Google 相簿可以備份這個資料夾）') : '拍照後不另存到手機'); }],
-    ...(FN ? [['📁 照片資料夾：圖片／' + photoFolder(), () => {
-      const v = prompt('照片存到「圖片／」底下的哪個資料夾？\n可以用「/」分層，例如：現場記錄/' + (pack?.code || pack?.name || '專案名稱') + '\n（Google 相簿 → 備份 → 備份裝置資料夾，打開這個資料夾就會自動備份）', photoFolder());
-      if (v === null) return; const t = v.replace(/[\\:*?"<>|]+/g, '_').replace(/^\/+|\/+$/g, '').trim() || '現場記錄';
-      try { localStorage.setItem('pp-field-folder', t); } catch (_) { /* 存不了 */ } toast('照片會存到「圖片／' + t + '」'); }]] : []),
+    [saveCamOn() ? '📥 拍照另存到手機：開（點一下關）' : '📥 拍照另存到手機：關（點一下開）', () => { const on = !saveCamOn(); try { localStorage.setItem('pp-field-savecam', on ? '1' : '0'); } catch (_) { /* 存不了 */ } toast(on ? (FN ? '拍照後會另存一份到「' + photoFolderLabel() + '」' : '拍照後會另存一份到手機的 Download 資料夾（Google 相簿可以備份這個資料夾）') : '拍照後不另存到手機'); }],
+    // 照片資料夾：用系統的「選擇資料夾」畫面選（2026-11-19 使用者要求「資料夾要可以用選的，而不是我自己打」）
+    ...(FN ? [['📁 照片資料夾：' + photoFolderLabel() + '（點一下選）', async () => {
+      try { const r = await FN.pickFolder({}); setPickedFolder({ uri: r.uri, name: r.name }); toast('照片會存到「' + r.name + '」（Google 相簿 → 備份 → 備份裝置資料夾，打開這個資料夾就會自動備份）'); }
+      catch (e) { if (!/取消|CANCEL/i.test(String(e?.message || e) + (e?.code || ''))) toast('選資料夾失敗：' + (e?.message || e), true); } }],
+      ...(pickedFolder() ? [['↩ 照片改回預設資料夾（圖片／' + photoFolder() + '）', () => { setPickedFolder(null); toast('照片會存到「圖片／' + photoFolder() + '」'); }]] : [])] : []),
     ['🗑 清除手機上的記錄', async () => { const n = recCount(); if (!n) { toast('沒有記錄'); return; } if (!confirm(`清除手機上的 ${n} 項記錄（含照片）？\n還沒在電腦匯入的會不見。`)) return; rec = emptyRec(); photos = []; await phClear(); await kvPut('rec', rec); renderRecBar(); drawPins(); reopen(); toast('已清除'); }],
     ['❔ 說明', () => alert('現場記錄\n\n1. 電腦 2D「施工進度」頁按「📱 匯出手機現場包」，存到 Google 雲端硬碟。\n2. 這裡「匯入現場包」選那個檔（之後沒網路也能用）。\n3. 點底圖上的電盤、設備記錄施工狀態、測試結果、到貨／安裝／送電，拍照。\n   長按空白處新增缺失或拍攝點；點位可以勾選後一起改。\n4. 「輸出記錄」→ 分享到雲端硬碟。\n5. 電腦 2D「施工進度」頁按「📱 匯入手機記錄」。\n\n' + (NATIVE ? '記錄存在這個 app 裡；解除安裝或清除 app 資料會不見，記得輸出。' : '記錄存在這支手機的瀏覽器裡；清除瀏覽器資料會不見，記得輸出。'))],
   ]);
