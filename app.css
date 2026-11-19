@@ -120,3 +120,9 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .wn-box ul { margin: 10px 0 14px; padding-left: 20px; color: var(--ink2); }
 .wn-box li { margin: 4px 0; }
 .wn-box .sb { width: 100%; }
+/* 階段按鈕：進料、到貨旁邊的拍照留證 */
+.gchip { display: inline-flex; align-items: stretch; gap: 2px; }
+.evb { min-height: 38px; padding: 4px 8px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); font-size: 14px; cursor: pointer; }
+.photos .ph .evtag { position: absolute; left: 2px; bottom: 2px; font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(14,116,144,.9); color: #fff; }
+.it .main .gbs { flex-wrap: wrap; margin-top: 4px; }
+.row-btns.gearall .sb { min-height: 34px; padding: 4px 10px; }

@@ -18,11 +18,14 @@ const uid = (p) => p + Date.now().toString(36).slice(-4) + Math.random().toStrin
 const ST_DEF = ['', '已配管', '已穿線', '已接線', '已測試', '已驗收'];
 const ST_C = { '': '#94a3b8', '已配管': '#b45309', '已穿線': '#a16207', '已接線': '#2563eb', '已測試': '#7c3aed', '已驗收': '#15803d' };
 const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a34a' };
-const GEAR = [['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
+// 設備、模組的階段（現場包的 gear＝2D 的 PROG_F；舊的現場包沒有時用這個）。進料、到貨可以拍照留證（EV）
+let GEAR = [['pur', '請購'], ['rcv', '進料'], ['pick', '領料'], ['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
+let EV = ['rcv', 'arr'];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
-const APP_VER = '2026-11-19.5';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
+const APP_VER = '2026-11-19.6';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
 // 每一版改了什麼（手機頁更新後第一次打開時提示，2026-11-19 使用者要求「版本提示」）
 const CHANGES = {
+  '2026-11-19.6': ['設備、模組多了請購、進料、領料三個階段', '進料、到貨旁邊的 📷 可以拍照留證（那個階段還沒記就記今天）'],
   '2026-11-19.5': ['設備、模組也可以新增缺失（設備的面板下方）', '點位依模組分組，每個點位寫出是哪個設備或模組', '更新後會提示這一版改了什麼'],
   '2026-11-19.4': ['有網路時一律先抓最新版', '選單上顯示版本'],
 };
@@ -70,11 +73,13 @@ function buildIndex() {
   const inPanel = new Map();
   for (const d of pack.devices || []) if (d.panelId) push(inPanel, d.panelId, { kind: 'd', id: d.id });
   for (const x of pack.modules || []) if (x.panelId) push(inPanel, x.panelId, { kind: 'm', id: x.id });
+  if (Array.isArray(pack.gear) && pack.gear.length) GEAR = pack.gear;
+  if (Array.isArray(pack.ev)) EV = pack.ev;
   ix = { P, D, M, T, ptsOfDev, ptsOfMod, inPanel, F: m(pack.floors), sts: pack.sts?.length ? pack.sts : ST_DEF };
 }
 const isPlaced = (o) => o && o.x != null && o.y != null && o.x !== '' && o.y !== '' && Number.isFinite(+o.x) && Number.isFinite(+o.y);
 const ptOf = (id) => ({ ...ix.T.get(id), ...rec.pts[id] });
-const gearOf = (kind, id) => { const o = (kind === 'd' ? ix.D : ix.M).get(id) || {}; return { arr: o.arr || '', ins: o.ins || '', pwr: o.pwr || '', pgTs: o.pgTs || 0, ...rec.gear[kind + ':' + id] }; };
+const gearOf = (kind, id) => { const o = (kind === 'd' ? ix.D : ix.M).get(id) || {}, v = { pgTs: o.pgTs || 0 }; for (const [f] of GEAR) v[f] = o[f] || ''; return { ...v, ...rec.gear[kind + ':' + id] }; };
 const itemOf = (kind, id) => kind === 'p' ? ix.P.get(id) : kind === 'd' ? ix.D.get(id) : ix.M.get(id);
 const ptsOf = (kind, id) => {
   if (kind === 'd') return ix.ptsOfDev.get(id) || [];
@@ -98,7 +103,7 @@ function progress(kind, id) {
   let sum = 0, n = 0;
   for (const t of ptsOf(kind, id)) { sum += Math.max(0, sts.indexOf(ptOf(t).st || '')) / top; n++; }
   const gears = kind === 'p' ? (ix.inPanel.get(id) || []) : [{ kind, id }];
-  for (const g of gears) { const v = gearOf(g.kind, g.id); sum += GEAR.filter(([f]) => v[f]).length / 3; n++; }
+  for (const g of gears) { const v = gearOf(g.kind, g.id); sum += GEAR.filter(([f]) => v[f]).length / GEAR.length; n++; }
   return n ? sum / n : null;
 }
 const pctColor = (v) => v === null ? '#64748b' : v >= 0.999 ? '#16a34a' : v > 0 ? '#d97706' : '#64748b';
@@ -129,9 +134,10 @@ function setPts(ids, patch) {
   touch();
   if (adv) toast('測試 OK：' + (ids.length > 1 ? adv + ' 個點位的' : '') + '施工狀態推進為「已測試」');
 }
+const gearPick = (v) => Object.fromEntries(GEAR.map(([f]) => [f, v[f] || '']));
 function setGear(kind, id, f, on) {
   const v = gearOf(kind, id);
-  rec.gear[kind + ':' + id] = { arr: v.arr, ins: v.ins, pwr: v.pwr, [f]: on ? today() : '', pgTs: Date.now() };
+  rec.gear[kind + ':' + id] = { ...gearPick(v), [f]: on ? today() : '', pgTs: Date.now() };
   touch();
 }
 function setIssue(id, patch) {
@@ -184,10 +190,11 @@ async function onPhotoFiles(e) {
   let n = 0, bad = 0;
   try {
     for (const f of fs) {
-      try { const p = await makePhoto(f); const r = { id: p.id, k: T.k, tid: T.tid, p }; await phPut(r); photos.push(r); n++; }
+      try { const p = await makePhoto(f); if (T.ev) { p.ev = T.ev; p.note = (GEAR.find((x) => x[0] === T.ev)?.[1] || '') + '留證'; } const r = { id: p.id, k: T.k, tid: T.tid, p }; await phPut(r); photos.push(r); n++; }
       catch (_) { bad++; }
     }
   } finally { busy(false); }
+  if (n && T.ev && !gearOf(T.k, T.tid)[T.ev]) setGear(T.k, T.tid, T.ev, true);
   touch();
   toast('已加入 ' + n + ' 張照片' + (bad ? '；' + bad + ' 張讀取失敗' : ''), !!bad && !n);
   T.after?.();
@@ -199,7 +206,7 @@ async function removePhoto(id) {
 }
 function photosHtml(k, tid) {
   const ps = photosOf(k, tid);
-  return `<div class="photos">${ps.map((x) => `<div class="ph"><img src="${x.p.th}" alt=""><button data-act="delph" data-id="${x.id}" aria-label="刪除照片">✕</button></div>`).join('')}</div>
+  return `<div class="photos">${ps.map((x) => `<div class="ph"><img src="${x.p.th}" alt="">${x.p.ev ? `<span class="evtag">${esc(GEAR.find((g) => g[0] === x.p.ev)?.[1] || '')}</span>` : ''}<button data-act="delph" data-id="${x.id}" aria-label="刪除照片">✕</button></div>`).join('')}</div>
     <div class="row-btns"><button class="sb pri" data-act="cam" data-k="${k}" data-tid="${esc(tid)}">📷 拍照</button><button class="sb" data-act="pics" data-k="${k}" data-tid="${esc(tid)}">🖼 從相簿</button></div>`;
 }
 
@@ -414,7 +421,7 @@ function itemSheet(kind, id) {
         const x = itemOf(c.kind, c.id), g = gearOf(c.kind, c.id), pv = progress(c.kind, c.id);
         return `<div class="it"><div class="main" data-act="item" data-kind="${c.kind}" data-id="${esc(c.id)}"><b>${esc(c.kind === 'm' ? x.code + ' ' + x.name : x.name || x.code)}</b><small>${KIND[c.kind]}${c.kind === 'd' && x.type ? '・' + esc(x.type) : ''}・點位 ${ptsOf(c.kind, c.id).length}</small><span class="gbs">${GEAR.map(([f, l]) => `<span class="gb${g[f] ? ' on' : ''}">${g[f] ? '✓' : ''}${l}</span>`).join('')}</span></div><span class="pct">${pv === null ? '' : Math.round(pv * 100) + '%'}</span><span class="go">›</span></div>`;
       }).join('')}</div>
-      <div class="row-btns"><button class="sb" data-act="gearall" data-f="arr">全部到貨</button><button class="sb" data-act="gearall" data-f="ins">全部安裝</button><button class="sb" data-act="gearall" data-f="pwr">全部送電</button></div>`;
+      <div class="sec">盤內全部記錄</div><div class="row-btns gearall">${GEAR.map(([f, l]) => `<button class="sb" data-act="gearall" data-f="${f}">${l}</button>`).join('')}</div>`;
     }
   }
   h += pointsHtml(ptsOf(kind, id), kind);
@@ -427,7 +434,8 @@ function itemSheet(kind, id) {
 }
 function gearHtml(kind, id) {
   const g = gearOf(kind, id);
-  return `<div class="gear">${GEAR.map(([f, l]) => `<button class="chip${g[f] ? ' on' : ''}" data-act="gear" data-kind="${kind}" data-id="${esc(id)}" data-f="${f}">${g[f] ? '✓ ' : ''}${l}${g[f] ? `<small>${esc(String(g[f]).slice(5))}</small>` : ''}</button>`).join('')}</div>`;
+  const evN = (f) => photosOf(kind, id).filter((x) => x.p.ev === f).length;
+  return `<div class="gear">${GEAR.map(([f, l]) => `<span class="gchip"><button class="chip${g[f] ? ' on' : ''}" data-act="gear" data-kind="${kind}" data-id="${esc(id)}" data-f="${f}">${g[f] ? '✓ ' : ''}${l}${g[f] ? `<small>${esc(String(g[f]).slice(5))}</small>` : ''}</button>${EV.includes(f) ? `<button class="evb" data-act="evcam" data-kind="${kind}" data-id="${esc(id)}" data-f="${f}" title="拍照留證">📷${evN(f) ? ' ' + evN(f) : ''}</button>` : ''}</span>`).join('')}</div>`;
 }
 // 點位屬於哪個模組（模組自己的點位：鏡像設備 md_）、哪個設備
 const modOfPt = (t) => t.moduleId || (String(t.deviceId || '').startsWith('md_') ? t.deviceId.slice(3) : '');
@@ -523,7 +531,7 @@ function onSheetClick(e) {
   else if (a === 'gear') { const g = gearOf(b.dataset.kind, id); setGear(b.dataset.kind, id, b.dataset.f, !g[b.dataset.f]); reopen(); }
   else if (a === 'gearall') {
     const kids = ix.inPanel.get(cur.id) || [], f = b.dataset.f, on = !kids.every((c) => gearOf(c.kind, c.id)[f]);
-    for (const c of kids) { const v = gearOf(c.kind, c.id); rec.gear[c.kind + ':' + c.id] = { arr: v.arr, ins: v.ins, pwr: v.pwr, [f]: on ? (v[f] || today()) : '', pgTs: Date.now() }; }
+    for (const c of kids) { const v = gearOf(c.kind, c.id); rec.gear[c.kind + ':' + c.id] = { ...gearPick(v), [f]: on ? (v[f] || today()) : '', pgTs: Date.now() }; }
     touch(); reopen(); toast((on ? '已全部記錄「' : '已全部取消「') + GEAR.find((x) => x[0] === f)[1] + '」（' + kids.length + ' 項）');
   }
   else if (a === 'pt') { if (open.has(id)) open.delete(id); else open.add(id); reopen(); }
@@ -536,6 +544,7 @@ function onSheetClick(e) {
   else if (a === 'pio') { setPts([id], { ioRes: b.dataset.v === '-' ? '' : b.dataset.v }); reopen(); }
   else if (a === 'newiss') { const it = newIssue(issueFields(cur.kind, cur.id)); openIssue(it.id, true); }
   else if (a === 'ist') { setIssue(cur.id, { st: b.dataset.v }); reopen(); }
+  else if (a === 'evcam') pickPhoto({ k: b.dataset.kind, tid: id, ev: b.dataset.f, after: reopen }, true);
   else if (a === 'cam' || a === 'pics') pickPhoto({ k: b.dataset.k, tid: b.dataset.tid, after: reopen }, a === 'cam');
   else if (a === 'delph') { if (confirm('刪除這張照片？')) removePhoto(id); }
   else if (a === 'deliss') { if (!confirm('刪除這筆手機新增的缺失？')) return; delete rec.iss[cur.id]; dropPhotos('i', cur.id); touch(); back(); }
