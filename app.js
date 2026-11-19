@@ -22,9 +22,10 @@ const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a3
 let GEAR = [['pur', '請購'], ['rcv', '進料'], ['pick', '領料'], ['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
 let EV = ['rcv', 'arr'];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
-const APP_VER = '2026-11-19.6';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
+const APP_VER = '2026-11-19.7';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
 // 每一版改了什麼（手機頁更新後第一次打開時提示，2026-11-19 使用者要求「版本提示」）
 const CHANGES = {
+  '2026-11-19.7': ['📷 拍照時另存一份原始照片到手機的「Download」資料夾，Google 相簿打開「備份裝置資料夾 → Download」就會自動備份（選單可以關）'],
   '2026-11-19.6': ['設備、模組多了請購、進料、領料三個階段', '進料、到貨旁邊的 📷 可以拍照留證（那個階段還沒記就記今天）'],
   '2026-11-19.5': ['設備、模組也可以新增缺失（設備的面板下方）', '點位依模組分組，每個點位寫出是哪個設備或模組', '更新後會提示這一版改了什麼'],
   '2026-11-19.4': ['有網路時一律先抓最新版', '選單上顯示版本'],
@@ -181,7 +182,23 @@ async function makePhoto(file) {
   return { id: uid('ph'), src, th, name, tk: fmtTime(new Date(file.lastModified || Date.now())), tkSrc: 'file', up: fmtTime(new Date()), hash, sz: file.size || 0, by: '', note: '' };
 }
 let photoTarget = null;   // { k, tid, after }
-function pickPhoto(target, camera) { photoTarget = target; (camera ? $('fileCam') : $('filePics')).click(); }
+function pickPhoto(target, camera) { photoTarget = { ...target, cam: !!camera }; (camera ? $('fileCam') : $('filePics')).click(); }
+// 拍照另存到手機（2026-11-19 使用者要求「拍的照片自動存在手機內，用 Google 相簿自動備份」）：
+// 相機直接交給頁面的照片不會進手機相簿，所以拍完把原始檔另外下載一份到「Download」資料夾（Google 相簿可以備份這個資料夾）。
+// 只有「📷 拍照」才存（「從相簿」選的本來就在相簿裡）；選單可以關，記在 localStorage pp-field-savecam（'0'＝關）。
+const saveCamOn = () => { try { return localStorage.getItem('pp-field-savecam') !== '0'; } catch (_) { return true; } };
+function photoLabel(T) {
+  const o = T.k === 's' ? shots().find((x) => x.id === T.tid) : T.k === 'i' ? issues().find((x) => x.id === T.tid) : itemOf(T.k, T.tid);
+  const nm = !o ? '' : T.k === 'p' ? (o.code || o.name) : T.k === 'm' ? o.code + ' ' + o.name : T.k === 'i' ? o.no : T.k === 's' ? (o.title || o.no) : (o.name || o.code);
+  return [pack?.code || pack?.name, nm, T.ev ? GEAR.find((g) => g[0] === T.ev)?.[1] : ''].filter(Boolean).join('_');
+}
+function saveToPhone(file, T) {
+  const d = new Date(), stamp = today().replace(/-/g, '') + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
+  const ext = (/\.([a-z0-9]+)$/i.exec(file.name || '') || [])[1] || 'jpg';
+  const name = (photoLabel(T) + '_' + stamp).replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 120) + '.' + ext;
+  try { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 8000); return true; }
+  catch (_) { return false; }
+}
 async function onPhotoFiles(e) {
   const fs = [...(e.target.files || [])]; e.target.value = '';
   const T = photoTarget; photoTarget = null;
@@ -190,7 +207,7 @@ async function onPhotoFiles(e) {
   let n = 0, bad = 0;
   try {
     for (const f of fs) {
-      try { const p = await makePhoto(f); if (T.ev) { p.ev = T.ev; p.note = (GEAR.find((x) => x[0] === T.ev)?.[1] || '') + '留證'; } const r = { id: p.id, k: T.k, tid: T.tid, p }; await phPut(r); photos.push(r); n++; }
+      try { if (T.cam && saveCamOn()) saveToPhone(f, T); const p = await makePhoto(f); if (T.ev) { p.ev = T.ev; p.note = (GEAR.find((x) => x[0] === T.ev)?.[1] || '') + '留證'; } const r = { id: p.id, k: T.k, tid: T.tid, p }; await phPut(r); photos.push(r); n++; }
       catch (_) { bad++; }
     }
   } finally { busy(false); }
@@ -662,6 +679,7 @@ function openMenu() {
     ['📥 匯入現場包', () => $('filePack').click()],
     ['📤 輸出記錄', exportRec],
     '-',
+    [saveCamOn() ? '📥 拍照另存到手機：開（點一下關）' : '📥 拍照另存到手機：關（點一下開）', () => { const on = !saveCamOn(); try { localStorage.setItem('pp-field-savecam', on ? '1' : '0'); } catch (_) { /* 存不了 */ } toast(on ? '拍照後會另存一份到手機的 Download 資料夾（Google 相簿可以備份這個資料夾）' : '拍照後不另存到手機'); }],
     ['🗑 清除手機上的記錄', async () => { const n = recCount(); if (!n) { toast('沒有記錄'); return; } if (!confirm(`清除手機上的 ${n} 項記錄（含照片）？\n還沒在電腦匯入的會不見。`)) return; rec = emptyRec(); photos = []; await phClear(); await kvPut('rec', rec); renderRecBar(); drawPins(); reopen(); toast('已清除'); }],
     ['❔ 說明', () => alert('現場記錄\n\n1. 電腦 2D「施工進度」頁按「📱 匯出手機現場包」，存到 Google 雲端硬碟。\n2. 這裡「匯入現場包」選那個檔（之後沒網路也能用）。\n3. 點底圖上的電盤、設備記錄施工狀態、測試結果、到貨／安裝／送電，拍照。\n   長按空白處新增缺失或拍攝點；點位可以勾選後一起改。\n4. 「輸出記錄」→ 分享到雲端硬碟。\n5. 電腦 2D「施工進度」頁按「📱 匯入手機記錄」。\n\n記錄存在這支手機的瀏覽器裡；清除瀏覽器資料會不見，記得輸出。')],
   ]);
