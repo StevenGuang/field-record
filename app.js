@@ -22,9 +22,12 @@ const ISS_C = { '開放': '#dc2626', '處理中': '#d97706', '已結案': '#16a3
 let GEAR = [['pur', '請購'], ['rcv', '進料'], ['pick', '領料'], ['arr', '到貨'], ['ins', '安裝'], ['pwr', '送電']];
 let EV = ['rcv', 'arr'];
 const PT_F = ['st', 'stAt', 'stBy', 'stNote', 'stTs', 'ioRes', 'ioVal', 'ioBy', 'ioAt', 'ioNote', 'ioTs'];
-const APP_VER = '2026-11-19.10';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
+const APP_VER = '2026-11-20.3';   // 手機頁的版本（選單上顯示；改了程式就改這裡、sw.js 的 CACHE，並在 CHANGES 寫這版改了什麼）
 // 每一版改了什麼（手機頁更新後第一次打開時提示，2026-11-19 使用者要求「版本提示」）
 const CHANGES = {
+  '2026-11-20.3': ['點一下拍好的照片可以修改：改階段、加選或取消設備、刪除'],
+  '2026-11-20.2': ['拍照改成 app 自己的相機畫面：按快門就存，不用再按「確定／重試」，可以一直拍，拍完按「完成」', '拍照按鈕精簡：設備、電盤只留一個「📷 拍照」（拍完一次選階段和設備），進料、到貨旁邊的 📷 拿掉'],
+  '2026-11-20.1': ['上方的 📷「拍照記錄」：連拍好幾張後，一次選階段（施工狀態、請購～送電、測試、其他，可以多選）和設備（可以多台、整面盤），請購～送電的階段順便記今天'],
   '2026-11-19.10': ['設備、模組合併成「設備」：原本的模組也叫設備（有通道的設備），點位依「上層設備」分組'],
   '2026-11-19.9': ['app 版：照片資料夾改成用選的（選單「📁 照片資料夾」打開系統的選擇資料夾畫面）'],
   '2026-11-19.8': ['有 Android app 版了：照片可以存到自己指定的資料夾（圖片／現場記錄…），輸出記錄用手機的分享選單'],
@@ -100,7 +103,8 @@ function issues() {
   return [...out.values()];
 }
 const shots = () => [...(pack.shots || []), ...Object.values(rec.shots)];
-const photosOf = (k, id) => photos.filter((x) => x.k === k && x.tid === id);
+// 照片可以掛給好幾個對象（拍照記錄，2026-11-20）：k／tid＝第一個，also＝其他的 [{ k, tid }]；k '_'＝還沒上 tag 的（拍照記錄進行中）
+const photosOf = (k, id) => photos.filter((x) => (x.k === k && x.tid === id) || (x.also || []).some((t) => t.k === k && t.tid === id));
 // 完成度（0～1；沒有東西可以算時 null）：點位的施工狀態（已驗收＝1）、到貨／安裝／送電
 function progress(kind, id) {
   const sts = ix.sts, top = sts.length - 1;
@@ -204,7 +208,7 @@ const saveCamOn = () => { try { return localStorage.getItem('pp-field-savecam') 
 function photoLabel(T) {
   const o = T.k === 's' ? shots().find((x) => x.id === T.tid) : T.k === 'i' ? issues().find((x) => x.id === T.tid) : itemOf(T.k, T.tid);
   const nm = !o ? '' : T.k === 'p' ? (o.code || o.name) : T.k === 'm' ? o.code + ' ' + o.name : T.k === 'i' ? o.no : T.k === 's' ? (o.title || o.no) : (o.name || o.code);
-  return [pack?.code || pack?.name, nm, T.ev ? GEAR.find((g) => g[0] === T.ev)?.[1] : ''].filter(Boolean).join('_');
+  return [pack?.code || pack?.name, nm || T.lab || '', T.ev ? GEAR.find((g) => g[0] === T.ev)?.[1] : ''].filter(Boolean).join('_');
 }
 async function saveToPhone(file, T) {
   const d = new Date(), stamp = today().replace(/-/g, '') + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
@@ -222,22 +226,81 @@ async function saveToPhone(file, T) {
   try { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 8000); return true; }
   catch (_) { return false; }
 }
+async function addPhotos(fs, T) {
+  let n = 0, bad = 0;
+  for (const f of fs) {
+      try { if (T.cam && saveCamOn()) saveToPhone(f, T); const p = await makePhoto(f); if (T.ev) { p.ev = T.ev; p.note = (GEAR.find((x) => x[0] === T.ev)?.[1] || '') + '留證'; } const r = { id: p.id, k: T.k, tid: T.tid, p }; await phPut(r); photos.push(r); n++; }
+      catch (_) { bad++; }
+  }
+  if (n && T.ev && !gearOf(T.k, T.tid)[T.ev]) setGear(T.k, T.tid, T.ev, true);
+  return { n, bad };
+}
 async function onPhotoFiles(e) {
   const fs = [...(e.target.files || [])]; e.target.value = '';
   const T = photoTarget; photoTarget = null;
   if (!fs.length || !T) return;
   busy('處理照片…');
   let n = 0, bad = 0;
-  try {
-    for (const f of fs) {
-      try { if (T.cam && saveCamOn()) saveToPhone(f, T); const p = await makePhoto(f); if (T.ev) { p.ev = T.ev; p.note = (GEAR.find((x) => x[0] === T.ev)?.[1] || '') + '留證'; } const r = { id: p.id, k: T.k, tid: T.tid, p }; await phPut(r); photos.push(r); n++; }
-      catch (_) { bad++; }
-    }
-  } finally { busy(false); }
-  if (n && T.ev && !gearOf(T.k, T.tid)[T.ev]) setGear(T.k, T.tid, T.ev, true);
+  try { ({ n, bad } = await addPhotos(fs, T)); } finally { busy(false); }
   touch();
   toast('已加入 ' + n + ' 張照片' + (bad ? '；' + bad + ' 張讀取失敗' : ''), !!bad && !n);
   T.after?.();
+}
+/* ---------- app 自己的相機畫面（2026-11-20 使用者要求「拍照時不用選確定或重試」）----------
+ * 系統相機（<input capture>）拍完一定要按確定／重試，所以改用 getUserMedia 自己畫相機畫面：按快門就存（有 ImageCapture 時用原始解析度），
+ * 可以一直拍，「完成」或 ✕ 回去。照片跟著目標 T 加入（同 onPhotoFiles：另存到手機、壓縮），在背景一張張處理，快門不用等。
+ * 開不了相機（沒有權限、不支援）時退回系統相機。Android app 版要在 AndroidManifest 宣告 CAMERA 權限（Capacitor 會在第一次用時問）。 */
+let camS = null;   // { stream, T, n, q（處理中的照片）, ic（ImageCapture）, busy }
+async function openCamera(T) {
+  if (!navigator.mediaDevices?.getUserMedia) { pickPhoto(T, true); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 4096 }, height: { ideal: 3072 } }, audio: false }); }
+  catch (e) { toast('開不了相機（' + (e?.name || e?.message || e) + '），改用系統相機', true); pickPhoto(T, true); return; }
+  const v = $('camVideo'); v.srcObject = stream;
+  try { await v.play(); } catch (_) { /* autoplay 會自己播 */ }
+  let ic = null;
+  try { if (window.ImageCapture) ic = new ImageCapture(stream.getVideoTracks()[0]); } catch (_) { ic = null; }
+  camS = { stream, T, n: 0, q: Promise.resolve(), ic, busy: false };
+  $('camLast').removeAttribute('src');
+  $('cam').hidden = false; camUi();
+}
+function camUi() { if (camS) $('camN').textContent = camS.n ? '已拍 ' + camS.n + ' 張' : '按圓鈕拍照，可以一直拍'; }
+async function shoot() {
+  const S = camS; if (!S || S.busy) return;
+  S.busy = true; $('camShot').classList.add('busy');
+  const fl = $('camFlash'); fl.classList.add('on'); setTimeout(() => fl.classList.remove('on'), 60);
+  try { navigator.vibrate?.(25); } catch (_) { /* 不支援 */ }
+  let blob = null;
+  try {
+    if (S.ic) { try { blob = await S.ic.takePhoto(); } catch (_) { S.ic = null; blob = null; } }   // 原始解析度；失敗一次之後改截畫面
+    if (!blob) {
+      const v = $('camVideo'), c = document.createElement('canvas'); c.width = v.videoWidth || 1280; c.height = v.videoHeight || 720;
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      blob = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.92)); c.width = c.height = 0;
+    }
+  } finally { S.busy = false; $('camShot').classList.remove('busy'); }
+  if (!blob || camS !== S) { if (!blob) toast('拍照失敗，請再按一次', true); return; }
+  S.n++; camUi();
+  const im = $('camLast'); if (im.src) URL.revokeObjectURL(im.src); im.src = URL.createObjectURL(blob);
+  const d = new Date(), stamp = today().replace(/-/g, '') + '_' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds()) + '_' + S.n;
+  const file = new File([blob], 'IMG_' + stamp + '.jpg', { type: blob.type || 'image/jpeg', lastModified: Date.now() });
+  S.q = S.q.then(() => addPhotos([file], { ...S.T, cam: true })).catch(() => {});
+}
+async function closeCamera() {
+  const S = camS; if (!S) return;
+  camS = null;
+  S.stream.getTracks().forEach((t) => t.stop());
+  $('camVideo').srcObject = null; $('cam').hidden = true;
+  const im = $('camLast'); if (im.src) { URL.revokeObjectURL(im.src); im.removeAttribute('src'); }
+  if (S.n) { busy('處理照片…'); try { await S.q; } finally { busy(false); } touch(); toast('已加入 ' + S.n + ' 張照片'); }
+  S.T.after?.();
+}
+function initCamera() {
+  $('camShot').addEventListener('click', shoot);
+  $('camDone').addEventListener('click', closeCamera);
+  $('camClose').addEventListener('click', closeCamera);
+  // 切到別的 app 時關掉相機（不然鏡頭一直開著）
+  document.addEventListener('visibilitychange', () => { if (document.hidden && camS) closeCamera(); });
 }
 async function removePhoto(id) {
   const i = photos.findIndex((x) => x.id === id);
@@ -246,9 +309,129 @@ async function removePhoto(id) {
 }
 function photosHtml(k, tid) {
   const ps = photosOf(k, tid);
-  return `<div class="photos">${ps.map((x) => `<div class="ph"><img src="${x.p.th}" alt="">${x.p.ev ? `<span class="evtag">${esc(GEAR.find((g) => g[0] === x.p.ev)?.[1] || '')}</span>` : ''}<button data-act="delph" data-id="${x.id}" aria-label="刪除照片">✕</button></div>`).join('')}</div>
-    <div class="row-btns"><button class="sb pri" data-act="cam" data-k="${k}" data-tid="${esc(tid)}">📷 拍照</button><button class="sb" data-act="pics" data-k="${k}" data-tid="${esc(tid)}">🖼 從相簿</button></div>`;
+  return `<div class="photos">${ps.map((x) => `<div class="ph"><img src="${x.p.th}" alt=""${'pdm'.includes(x.k) ? ` data-act="phedit" data-id="${x.id}" title="點一下修改階段、設備"` : ''}>${tagTxt(x.p) ? `<span class="evtag">${esc(tagTxt(x.p))}</span>` : ''}${x.also?.length ? `<span class="evn">+${x.also.length}</span>` : ''}<button data-act="delph" data-id="${x.id}" aria-label="刪除照片">✕</button></div>`).join('')}</div>
+    <div class="row-btns">${'pdm'.includes(k) ? `<button class="sb pri" data-act="bfrom" data-k="${k}" data-tid="${esc(tid)}" title="拍完一次選階段，也可以多選其他設備">📷 拍照</button>` : `<button class="sb pri" data-act="cam" data-k="${k}" data-tid="${esc(tid)}">📷 拍照</button><button class="sb" data-act="pics" data-k="${k}" data-tid="${esc(tid)}">🖼 從相簿</button>`}</div>`;
 }
+
+/* ---------- 拍照記錄（2026-11-20 使用者要求「進料和到貨要拍很多張，改成拍完照可以上 tag」）----------
+ * 上方的 📷：連拍（每拍一張回到這個面板，可以再拍、從相簿加）→ 一次選階段（固定的：施工狀態、請購～送電、測試、其他，可以多選）
+ * 和設備（可以多台、整面盤）→ 完成：照片掛給選的每一個（photos 的 also），請購～送電的階段在還沒記的設備上記今天。
+ * 還沒按完成的照片存成 k '_'（關掉頁面也不會不見，下次打開接著上 tag），不會輸出。 */
+const TAGS = () => [['st', '施工狀態'], ...GEAR, ['test', '測試'], ['etc', '其他']];
+const tagTxt = (p) => (p.tags || (p.ev ? [p.ev] : [])).map((f) => TAGS().find((t) => t[0] === f)?.[1]).filter(Boolean).join('・');
+let bt = null;   // { sel: Set('p:id'／'d:id'／'m:id'), tags: Set, q, all }
+const pending = () => photosOf('_', '');
+function openBatch(pre, cam, push = false) {
+  if (!bt) bt = { sel: new Set(), tags: new Set(), q: '', all: false };
+  if (pre) bt.sel.add(pre);
+  openSheet({ type: 'list', fn: batchSheet }, push);
+  if (cam) openCamera({ k: '_', tid: '', after: reopen, lab: pre ? tgName(pre) : '' });
+}
+function tgName(key) {
+  const k = key[0], o = itemOf(k, key.slice(2));
+  return !o ? key : k === 'd' ? (o.name || o.code || '') : ((o.code || '') + ' ' + (o.name || '')).trim();
+}
+function batchRows() {
+  const q = bt.q.trim().toLowerCase(), fl = bt.all || q ? '' : curFloor, out = [];
+  const flOf = (o) => o.floorId || (o.panelId ? ix.P.get(o.panelId)?.floorId : '') || '';
+  const txt = (o) => (String(o.code || '') + ' ' + (o.name || '') + ' ' + (o.type || '')).toLowerCase();
+  const row = (k, o, child) => ({ key: k + ':' + o.id, nm: tgName(k + ':' + o.id), sub: KIND[k] + (o.type ? '・' + o.type : ''), child });
+  for (const p of pack.panels || []) {
+    if (fl && p.floorId !== fl) continue;
+    const kids = (ix.inPanel.get(p.id) || []).map((c) => ({ k: c.kind, o: itemOf(c.kind, c.id) })).filter((c) => c.o);
+    const pm = !q || txt(p).includes(q), km = kids.filter((c) => pm || txt(c.o).includes(q));
+    if (!pm && !km.length) continue;
+    out.push({ key: 'p:' + p.id, nm: tgName('p:' + p.id), sub: '電盤・盤內 ' + kids.length + ' 台', kids: kids.map((c) => c.k + ':' + c.o.id) });
+    for (const c of km) out.push(row(c.k, c.o, true));
+  }
+  for (const [k, L] of [['d', pack.devices], ['m', pack.modules]]) for (const o of L || []) {
+    if (o.panelId || (fl && flOf(o) !== fl) || (q && !txt(o).includes(q))) continue;
+    out.push(row(k, o, false));
+  }
+  return out;
+}
+function batchSheet() {
+  if (bt.edit) return editSheet();
+  const ps = pending(), B = bt, tags = TAGS(), sel = [...B.sel], rows = batchRows();
+  const gearSel = GEAR.some(([f]) => B.tags.has(f));
+  let h = '<div class="sec">照片（' + ps.length + ' 張）</div><div class="photos">' + ps.map((x) => '<div class="ph"><img src="' + x.p.th + '" alt=""><button data-act="bdelph" data-id="' + x.id + '" aria-label="刪除照片">✕</button></div>').join('') + '</div>'
+    + '<div class="row-btns"><button class="sb pri" data-act="bcam">📷 ' + (ps.length ? '再拍一張' : '拍照') + '</button><button class="sb" data-act="bpics">🖼 從相簿加</button></div>';
+  h += '<div class="sec">階段（可以多選）</div><div class="gear">' + tags.map(([f, l]) => '<button class="chip' + (B.tags.has(f) ? ' on' : '') + '" data-act="btag" data-f="' + f + '">' + (B.tags.has(f) ? '✓ ' : '') + esc(l) + '</button>').join('') + '</div>'
+    + (gearSel ? '<p class="note">請購～送電：選的設備還沒記這個階段的，會記成今天（' + today() + '）</p>' : '');
+  h += '<div class="sec">設備、電盤（已選 ' + sel.length + '）<span class="grow"></span>' + (sel.length ? '<button class="sb" data-act="bclrsel">全部取消</button>' : '') + '</div>';
+  if (sel.length) h += '<div class="bsel">' + sel.map((k) => '<button class="chip on" data-act="bunsel" data-key="' + esc(k) + '">' + esc(tgName(k)) + ' ✕</button>').join('') + '</div>';
+  h += '<input class="search" id="batchQ" type="search" placeholder="搜尋盤號、設備名稱、編號（所有樓層）" value="' + esc(B.q) + '" autocomplete="off">'
+    + '<label class="bfl"><input type="checkbox" data-act="ball"' + (B.all ? ' checked' : '') + '> 全部樓層（沒勾＝目前樓層 ' + esc(ix.F.get(curFloor)?.name || '') + '）</label>';
+  const shown = rows.slice(0, 200);
+  h += shown.length ? '<div class="list">' + shown.map((x) => '<div class="it' + (x.child ? ' child' : '') + '"><input type="checkbox" data-act="bsel" data-key="' + esc(x.key) + '"' + (B.sel.has(x.key) ? ' checked' : '') + '><div class="main" data-act="bsel" data-key="' + esc(x.key) + '"><b>' + esc(x.nm) + '</b><small>' + esc(x.sub) + '</small></div>'
+      + (x.kids && x.kids.length ? '<button class="sb" data-act="bkids" data-key="' + esc(x.key) + '">' + (x.kids.every((k) => B.sel.has(k)) ? '取消盤內' : '選盤內 ' + x.kids.length) + '</button>' : '') + '</div>').join('') + '</div>'
+      + (rows.length > 200 ? '<p class="note">只列前 200 筆，請用搜尋</p>' : '')
+    : '<p class="muted">' + (B.q ? '找不到' : '這層沒有電盤、設備') + '</p>';
+  h += '<div class="row-btns bfoot"><button class="sb pri" data-act="bdone"' + (ps.length && sel.length ? '' : ' disabled') + '>完成：' + ps.length + ' 張照片 → ' + sel.length + ' 個對象</button>' + (ps.length ? '<button class="sb bad" data-act="bdrop">放棄這些照片</button>' : '') + '</div>';
+  return ['拍照記錄<small>拍完一次選階段和設備</small>', h];
+}
+async function batchDone() {
+  const ps = pending(), T = [...bt.sel].map((k) => ({ k: k[0], tid: k.slice(2) })), tags = TAGS().map((t) => t[0]).filter((f) => bt.tags.has(f));
+  if (!ps.length || !T.length) return;
+  const gearT = tags.filter((f) => GEAR.some((g) => g[0] === f)), ev = tags.find((f) => EV.includes(f)), note = tags.map((f) => TAGS().find((t) => t[0] === f)?.[1]).filter(Boolean).join('・');
+  busy('儲存照片…');
+  try {
+    for (const x of ps) { x.k = T[0].k; x.tid = T[0].tid; x.also = T.slice(1); x.p = { ...x.p, tags, note }; if (ev) x.p.ev = ev; else delete x.p.ev; await phPut(x); }
+  } finally { busy(false); }
+  let nG = 0;
+  for (const t of T) if (t.k !== 'p') for (const f of gearT) { const v = gearOf(t.k, t.tid); if (v[f]) continue; rec.gear[t.k + ':' + t.tid] = { ...gearPick(v), [f]: today(), pgTs: Date.now() }; nG++; }
+  bt = null; touch(); back();
+  toast('已記錄 ' + ps.length + ' 張照片 → ' + T.length + ' 個對象' + (nG ? '；記了 ' + nG + ' 個階段（今天）' : ''));
+}
+// 修改拍好的照片（2026-11-20 使用者要求「拍好的照片要可以修改 tag 或加、減選設備」）：同拍照記錄的面板，bt.edit＝照片 id；
+//   原本的拍照記錄（bt）先收著（bt.prev），改完放回去。新加的請購～送電階段、新加的設備，還沒記的照樣記今天；拿掉的不會取消已經記的日期。
+function openPhotoEdit(id) {
+  const x = photos.find((q) => q.id === id); if (!x || !'pdm'.includes(x.k)) return;
+  const sel = new Set([x.k + ':' + x.tid, ...(x.also || []).map((t) => t.k + ':' + t.tid)]);
+  bt = { sel, tags: new Set(x.p.tags || (x.p.ev ? [x.p.ev] : [])), q: '', all: false, edit: id, prev: bt };
+  openSheet({ type: 'list', fn: batchSheet }, true);
+}
+function editSheet() {
+  const B = bt, x = photos.find((q) => q.id === B.edit);
+  if (!x) return ['找不到照片', '<p class="muted">這張照片已經刪除。</p>'];
+  const keep = { ...B }; bt = { ...B, edit: '' };
+  let [, h] = batchSheet(); bt = keep;
+  // 換掉「照片（N 張）＋再拍」那段與最下面的按鈕
+  const i0 = h.indexOf('<div class="sec">階段'), i1 = h.lastIndexOf('<div class="row-btns bfoot">');
+  h = '<div class="bigph"><img src="' + x.p.src + '" alt=""></div><p class="note">拍攝 ' + esc(x.p.tk || '') + '</p>' + h.slice(i0, i1)
+    + '<div class="row-btns bfoot"><button class="sb pri" data-act="bdone"' + (B.sel.size ? '' : ' disabled') + '>完成（' + B.sel.size + ' 個對象）</button><button class="sb bad" data-act="bdelone">刪除這張照片</button></div>';
+  return ['修改照片<small>階段、設備</small>', h];
+}
+async function editDone() {
+  const B = bt, x = photos.find((q) => q.id === B.edit); if (!x) return;
+  const T = [...B.sel].map((k) => ({ k: k[0], tid: k.slice(2) })); if (!T.length) return;
+  const tags = TAGS().map((t) => t[0]).filter((f) => B.tags.has(f)), gearT = tags.filter((f) => GEAR.some((g) => g[0] === f)), ev = tags.find((f) => EV.includes(f));
+  x.k = T[0].k; x.tid = T[0].tid; x.also = T.slice(1);
+  x.p = { ...x.p, tags, note: tags.map((f) => TAGS().find((t) => t[0] === f)?.[1]).filter(Boolean).join('・') }; if (ev) x.p.ev = ev; else delete x.p.ev;
+  await phPut(x);
+  let nG = 0;
+  for (const t of T) if (t.k !== 'p') for (const f of gearT) { const v = gearOf(t.k, t.tid); if (v[f]) continue; rec.gear[t.k + ':' + t.tid] = { ...gearPick(v), [f]: today(), pgTs: Date.now() }; nG++; }
+  bt = B.prev || null; touch(); back();
+  toast('已修改照片：' + T.length + ' 個對象' + (tags.length ? '、' + tags.length + ' 個階段' : '') + (nG ? '；記了 ' + nG + ' 個階段（今天）' : ''));
+}
+function onBatchClick(b) {
+  const a = b.dataset.act, key = b.dataset.key;
+  if (a === 'bcam') openCamera({ k: '_', tid: '', after: reopen });
+  else if (a === 'bpics') pickPhoto({ k: '_', tid: '', after: reopen }, false);
+  else if (a === 'btag') { const f = b.dataset.f; if (bt.tags.has(f)) bt.tags.delete(f); else bt.tags.add(f); reopen(); }
+  else if (a === 'bsel') { const on = b.tagName === 'INPUT' ? b.checked : !bt.sel.has(key); if (on) bt.sel.add(key); else bt.sel.delete(key); reopen(); }
+  else if (a === 'bunsel') { bt.sel.delete(key); reopen(); }
+  else if (a === 'bclrsel') { bt.sel.clear(); reopen(); }
+  else if (a === 'bkids') { const r0 = batchRows().find((x) => x.key === key); if (!r0) return true; const all = r0.kids.every((k) => bt.sel.has(k)); r0.kids.forEach((k) => (all ? bt.sel.delete(k) : bt.sel.add(k))); reopen(); }
+  else if (a === 'ball') { bt.all = b.checked; reopen(); }
+  else if (a === 'bdelph') { removePhoto(b.dataset.id); }
+  else if (a === 'bdrop') { if (!confirm('放棄這 ' + pending().length + ' 張還沒上 tag 的照片？')) return true; dropPhotos('_', '').then(() => { bt = null; touch(); back(); }); }
+  else if (a === 'bdone') { if (bt.edit) editDone(); else batchDone(); }
+  else if (a === 'bdelone') { const id = bt.edit; if (!confirm('刪除這張照片？')) return true; const prev = bt.prev; bt = prev || null; back(); removePhoto(id); }
+  else return false;
+  return true;
+}
+
 
 /* ---------- 底圖與圖釘 ---------- */
 const view = { k: 1, x: 0, y: 0 };
@@ -389,7 +572,7 @@ function onLong(x, y) {
   const mk = document.createElement('div'); mk.className = 'mk-long'; mk.style.left = q.x + 'px'; mk.style.top = q.y + 'px'; $('pins').appendChild(mk);
   showPop(x, y, '在這裡新增', [
     ['⚠ 新增缺失', () => { const it = newIssue({ ...at }); openIssue(it.id); }],
-    ['📷 新增拍攝點（拍照）', () => { const sh = newShot({ ...at }); pickPhoto({ k: 's', tid: sh.id, after: () => openShot(sh.id) }, true); }],
+    ['📷 新增拍攝點（拍照）', () => { const sh = newShot({ ...at }); openCamera({ k: 's', tid: sh.id, after: () => openShot(sh.id) }); }],
   ], () => mk.remove());
 }
 
@@ -419,7 +602,7 @@ function openSheet(state, push = false) {
   if (push && cur) stack.push(cur); else if (!push) stack.length = 0;
   cur = state; render();
 }
-function closeSheet() { $('sheet').hidden = true; cur = null; stack.length = 0; selKey = ''; drawPins(); }
+function closeSheet() { if (bt && bt.edit) bt = bt.prev || null; $('sheet').hidden = true; cur = null; stack.length = 0; selKey = ''; drawPins(); }
 function reopen() { if (cur) render(); }
 function back() { cur = stack.pop() || null; if (cur) render(); else closeSheet(); }
 const open = new Set();   // 展開編輯的點位
@@ -474,8 +657,8 @@ function itemSheet(kind, id) {
 }
 function gearHtml(kind, id) {
   const g = gearOf(kind, id);
-  const evN = (f) => photosOf(kind, id).filter((x) => x.p.ev === f).length;
-  return `<div class="gear">${GEAR.map(([f, l]) => `<span class="gchip"><button class="chip${g[f] ? ' on' : ''}" data-act="gear" data-kind="${kind}" data-id="${esc(id)}" data-f="${f}">${g[f] ? '✓ ' : ''}${l}${g[f] ? `<small>${esc(String(g[f]).slice(5))}</small>` : ''}</button>${EV.includes(f) ? `<button class="evb" data-act="evcam" data-kind="${kind}" data-id="${esc(id)}" data-f="${f}" title="拍照留證">📷${evN(f) ? ' ' + evN(f) : ''}</button>` : ''}</span>`).join('')}</div>`;
+  const evN = (f) => photosOf(kind, id).filter((x) => (x.p.tags || [x.p.ev]).includes(f)).length;
+  return `<div class="gear">${GEAR.map(([f, l]) => `<span class="gchip"><button class="chip${g[f] ? ' on' : ''}" data-act="gear" data-kind="${kind}" data-id="${esc(id)}" data-f="${f}">${g[f] ? '✓ ' : ''}${l}${g[f] ? `<small>${esc(String(g[f]).slice(5))}</small>` : ''}</button>${evN(f) ? `<span class="evc" title="這個階段的照片">📷${evN(f)}</span>` : ''}</span>`).join('')}</div>`;
 }
 // 點位屬於哪個模組（模組自己的點位：鏡像設備 md_）、哪個設備
 const modOfPt = (t) => t.moduleId || (String(t.deviceId || '').startsWith('md_') ? t.deviceId.slice(3) : '');
@@ -566,6 +749,9 @@ function onSheetClick(e) {
   if (Date.now() < ghostUntil) { e.preventDefault(); return; }
   const b = e.target.closest('[data-act]'); if (!b) return;
   const a = b.dataset.act, id = b.dataset.id;
+  if (a.startsWith('b') && bt && onBatchClick(b)) return;
+  if (a === 'phedit') { openPhotoEdit(id); return; }
+  if (a === 'bfrom') { openBatch(b.dataset.k + ':' + b.dataset.tid, true, true); return; }
   if (a === 'item') openItem(b.dataset.kind, id, true);
   else if (a === 'iss') openIssue(id, true);
   else if (a === 'gear') { const g = gearOf(b.dataset.kind, id); setGear(b.dataset.kind, id, b.dataset.f, !g[b.dataset.f]); reopen(); }
@@ -585,13 +771,14 @@ function onSheetClick(e) {
   else if (a === 'newiss') { const it = newIssue(issueFields(cur.kind, cur.id)); openIssue(it.id, true); }
   else if (a === 'ist') { setIssue(cur.id, { st: b.dataset.v }); reopen(); }
   else if (a === 'evcam') pickPhoto({ k: b.dataset.kind, tid: id, ev: b.dataset.f, after: reopen }, true);
-  else if (a === 'cam' || a === 'pics') pickPhoto({ k: b.dataset.k, tid: b.dataset.tid, after: reopen }, a === 'cam');
-  else if (a === 'delph') { if (confirm('刪除這張照片？')) removePhoto(id); }
+  else if (a === 'cam') openCamera({ k: b.dataset.k, tid: b.dataset.tid, after: reopen });
+  else if (a === 'pics') pickPhoto({ k: b.dataset.k, tid: b.dataset.tid, after: reopen }, false);
+  else if (a === 'delph') { const x = photos.find((q) => q.id === id), n = x?.also?.length || 0; if (confirm(n ? '這張照片也掛在另外 ' + n + ' 個對象，一起刪除？' : '刪除這張照片？')) removePhoto(id); }
   else if (a === 'deliss') { if (!confirm('刪除這筆手機新增的缺失？')) return; delete rec.iss[cur.id]; dropPhotos('i', cur.id); touch(); back(); }
   else if (a === 'delshot') { if (!confirm('刪除這個拍攝點和它的照片？')) return; delete rec.shots[cur.id]; dropPhotos('s', cur.id); touch(); back(); }
   else if (a === 'goto') { const [k, gid] = [b.dataset.k, id]; goTo(k, gid); }
 }
-async function dropPhotos(k, tid) { for (const x of photosOf(k, tid)) await phDel(x.id); photos = photos.filter((x) => !(x.k === k && x.tid === tid)); }
+async function dropPhotos(k, tid) { const del = new Set(photosOf(k, tid).map((x) => x.id)); for (const id of del) await phDel(id); photos = photos.filter((x) => !del.has(x.id)); }
 function onSheetChange(e) {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const a = b.dataset.act;
@@ -673,12 +860,13 @@ function recFile(seq) {
   });
   const sh = Object.values(rec.shots).map((s) => ({ id: s.id, no: s.no, title: s.title, floorId: s.floorId, x: s.x, y: s.y, at: s.at }));
   return { type: 'pp-field-rec', v: 1, code: pack.code || '', name: pack.name || '', at: new Date().toISOString(), pack: pack.id || '', rid: phoneId(), seq: seq ?? nextSeq(), app: APP_VER,
-    points: pts, devices: gear('d'), modules: gear('m'), issues: iss, shots: sh, photos: photos.map((x) => ({ k: x.k, id: x.tid, p: x.p })) };
+    points: pts, devices: gear('d'), modules: gear('m'), issues: iss, shots: sh, photos: photos.filter((x) => x.k !== '_').map((x) => ({ k: x.k, id: x.tid, p: x.p, ...(x.also?.length ? { also: x.also.map((t) => ({ k: t.k, id: t.tid })) } : {}) })) };
 }
 async function exportRec() {
   if (!pack) return;
   const n = recCount();
   if (!n) { toast('還沒有任何記錄'); return; }
+  if (pending().length) toast('還有 ' + pending().length + ' 張照片沒選階段和設備，這次不會輸出（上方 📷 繼續）', true);
   busy('製作記錄檔…');
   const d = new Date(), stamp = today().replace(/-/g, '') + p2(d.getHours()) + p2(d.getMinutes());
   const seq = nextSeq(), name = (pack.code || pack.name || 'project') + '_現場記錄_第' + seq + '次_' + stamp + '.json';
@@ -746,17 +934,19 @@ async function boot() {
   $('floorSel').addEventListener('change', (e) => { closeSheet(); setFloor(e.target.value); });
   $('btnMenu').addEventListener('click', openMenu);
   $('btnSearch').addEventListener('click', () => { if (pack) openSearch(); });
+  $('btnShoot').addEventListener('click', () => { if (pack) openBatch(null, !pending().length); });
   $('btnIss').addEventListener('click', () => { if (pack) openIssueList(); });
   $('btnExport2').addEventListener('click', exportRec);
   $('shClose').addEventListener('click', closeSheet);
   $('shBack').addEventListener('click', back);
   $('shBody').addEventListener('click', onSheetClick);
   $('shBody').addEventListener('change', onSheetChange);
-  $('shBody').addEventListener('input', (e) => { if (e.target.id === 'searchIn') { searchQ = e.target.value; const pos = e.target.selectionStart; render(); const i = $('searchIn'); i.focus(); i.setSelectionRange(pos, pos); } });
+  $('shBody').addEventListener('input', (e) => { if (e.target.id === 'batchQ' && bt) { bt.q = e.target.value; const pos = e.target.selectionStart; render(); const i = $('batchQ'); i.focus(); i.setSelectionRange(pos, pos); return; } if (e.target.id === 'searchIn') { searchQ = e.target.value; const pos = e.target.selectionStart; render(); const i = $('searchIn'); i.focus(); i.setSelectionRange(pos, pos); } });
   $('shBody').addEventListener('click', (e) => { if (e.target.closest('[data-act="newiss2"]')) { const it = newIssue({}); openIssue(it.id, true); } });
   document.querySelector('[data-act="import"]').addEventListener('click', () => $('filePack').click());
   $('filePack').addEventListener('change', (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importPack(f); });
   $('fileCam').addEventListener('change', onPhotoFiles);
+  initCamera();
   $('filePics').addEventListener('change', onPhotoFiles);
   addEventListener('resize', () => { if (pack && !cur) fitView(); });
   document.addEventListener('pointerdown', (e) => { if (!$('pop').hidden && !e.target.closest('#pop')) hidePop(); }, true);
@@ -773,6 +963,7 @@ async function boot() {
   } catch (e) { toast('讀不到手機上的資料：' + e.message, true); }
   if (pack) start(); else $('empty').hidden = false;
   showWhatsNew();
+  if (pack && pending().length) { openBatch(null, false); toast('上次拍的 ' + pending().length + ' 張照片還沒選階段和設備'); }
 }
 // 手機頁換新版後第一次打開：提示這一版改了什麼（第一次安裝不提示）
 function showWhatsNew() {
@@ -785,5 +976,5 @@ function showWhatsNew() {
   el.querySelector('button').onclick = () => el.remove();
   document.body.appendChild(el);
 }
-window.fieldApp = { get pack() { return pack; }, get rec() { return rec; }, get photos() { return photos; }, recFile, importPack, setFloor, openKey, goTo, setPts, setGear };   // 測試用
+window.fieldApp = { get pack() { return pack; }, get rec() { return rec; }, get photos() { return photos; }, recFile, importPack, setFloor, openKey, goTo, setPts, setGear, openBatch, openCamera, shoot, closeCamera, openPhotoEdit, get camS() { return camS; }, get bt() { return bt; } };   // 測試用
 boot();

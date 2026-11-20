@@ -14,6 +14,7 @@
   <div class="t-row">
     <select id="floorSel" aria-label="樓層"></select>
     <div class="t-name" id="projName">現場記錄</div>
+    <button class="ib" id="btnShoot" aria-label="拍照記錄" title="拍照記錄：連拍後一次選階段和設備">📷</button>
     <button class="ib" id="btnSearch" aria-label="搜尋" title="搜尋">🔍</button>
     <button class="ib" id="btnIss" aria-label="缺失清單" title="缺失清單">⚠</button>
     <button class="ib" id="btnMenu" aria-label="選單" title="選單">☰</button>
@@ -37,6 +38,12 @@
   <div class="sh-body" id="shBody"></div>
 </section>
 
+<div id="cam" class="cam" hidden>
+  <video id="camVideo" playsinline muted autoplay></video>
+  <div id="camFlash" class="cam-flash"></div>
+  <div class="cam-top"><span id="camN"></span><button class="ib" id="camClose" aria-label="關閉相機">✕</button></div>
+  <div class="cam-bar"><img id="camLast" alt=""><button id="camShot" class="cam-shot" aria-label="拍照"></button><button class="sb pri" id="camDone">完成</button></div>
+</div>
 <div id="pop" class="pop" hidden></div>
 <div id="toast" class="toast" hidden></div>
 <div id="busy" class="busy" hidden><div class="spin"></div><div id="busyTxt">處理中…</div></div>

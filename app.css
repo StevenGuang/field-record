@@ -126,3 +126,31 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .photos .ph .evtag { position: absolute; left: 2px; bottom: 2px; font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(14,116,144,.9); color: #fff; }
 .it .main .gbs { flex-wrap: wrap; margin-top: 4px; }
 .row-btns.gearall .sb { min-height: 34px; padding: 4px 10px; }
+/* 拍照記錄（2026-11-20） */
+.it.child { padding-left: 30px; background: #fafafa; }
+.it .sb { min-height: 34px; padding: 4px 10px; font-size: 13px; flex: 0 0 auto; }
+.bsel { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.bsel .chip { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+.bfl { display: flex; align-items: center; gap: 6px; font-size: 14px; margin: 0 0 8px; }
+.bfl input { width: 22px; height: 22px; accent-color: var(--ac); }
+.bfoot { position: sticky; bottom: 0; background: var(--surface); padding: 8px 0; margin-bottom: 0; box-shadow: 0 -6px 10px -6px rgba(0,0,0,.15); }
+.bfoot .sb.pri { flex: 1; }
+.photos .ph .evn { position: absolute; right: 2px; bottom: 2px; font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(234,88,12,.9); color: #fff; }
+/* app 自己的相機畫面（2026-11-20：系統相機拍完要按確定／重試） */
+.cam { position: fixed; inset: 0; z-index: 45; background: #000; }
+.cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.cam-flash.on { opacity: .75; transition: none; }
+.cam-top { position: absolute; left: 0; right: 0; top: env(safe-area-inset-top); display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; color: #fff; font-size: 15px; text-shadow: 0 1px 3px #000; }
+.cam-top .ib { background: rgba(0,0,0,.4); color: #fff; }
+.cam-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; padding: 18px 24px calc(22px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.55)); }
+.cam-shot { width: 78px; height: 78px; border-radius: 50%; border: 6px solid #fff; background: rgba(255,255,255,.25); cursor: pointer; }
+.cam-shot:active, .cam-shot.busy { background: #fff; }
+#camLast { width: 58px; height: 58px; border-radius: 10px; border: 2px solid #fff; object-fit: cover; background: #1e293b; }
+#camLast:not([src]) { visibility: hidden; }
+#camDone { min-width: 72px; }
+.evc { align-self: center; font-size: 12px; color: var(--muted); margin-left: 2px; }
+/* 修改照片（2026-11-20） */
+.bigph { margin: 4px 0; border-radius: 10px; overflow: hidden; background: #000; text-align: center; }
+.bigph img { max-width: 100%; max-height: 38vh; display: inline-block; vertical-align: middle; }
+.photos .ph img[data-act] { cursor: pointer; }
